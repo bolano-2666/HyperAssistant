@@ -10,7 +10,10 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -63,35 +66,62 @@ class FloatingOverlayService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (overlayView == null) {
-            showSuperAssistantOverlay()
-        }
+        showSuperAssistantOverlay()
         return START_NOT_STICKY
     }
 
     private fun showSuperAssistantOverlay() {
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val inflater = LayoutInflater.from(this)
-        overlayView = inflater.inflate(R.layout.overlay_siri, null)
-
-        val layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                WindowManager.LayoutParams.TYPE_PHONE
-            },
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.CENTER
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            Log.e(TAG, "悬浮窗权限未开启，无法弹出流光浮层")
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(this, "⚠️ 悬浮窗权限未开启，无法显示胶囊浮层！请在应用中开启", Toast.LENGTH_LONG).show()
+            }
+            return
         }
 
-        bindOverlayViews(overlayView!!)
-        windowManager?.addView(overlayView, layoutParams)
+        try {
+            windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            
+            // 如果已有浮层，先移除旧浮层
+            if (overlayView != null) {
+                try {
+                    windowManager?.removeView(overlayView)
+                } catch (ignored: Exception) {}
+                overlayView = null
+            }
+
+            val inflater = LayoutInflater.from(this)
+            overlayView = inflater.inflate(R.layout.overlay_siri, null)
+
+            val layoutParams = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.MATCH_PARENT,
+                WindowManager.LayoutParams.MATCH_PARENT,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    WindowManager.LayoutParams.TYPE_PHONE
+                },
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                PixelFormat.TRANSLUCENT
+            ).apply {
+                gravity = Gravity.CENTER
+            }
+
+            bindOverlayViews(overlayView!!)
+            windowManager?.addView(overlayView, layoutParams)
+            Log.i(TAG, "✅ 成功向系统 WindowManager 添加超级小爱胶囊浮层！")
+        } catch (e: Throwable) {
+            Log.e(TAG, "❌ 添加悬浮窗失败: ${e.message}", e)
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(
+                    this,
+                    "弹出浮层失败: ${e.message}\n请在手机「应用管理」中授予「后台弹出界面」与「悬浮窗」权限",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
     }
 
     private fun bindOverlayViews(view: View) {
@@ -384,7 +414,9 @@ class FloatingOverlayService : Service() {
         audioRecordManager.stopListening()
         ttsPlaybackManager.stop()
         if (overlayView != null) {
-            windowManager?.removeView(overlayView)
+            try {
+                windowManager?.removeView(overlayView)
+            } catch (ignored: Exception) {}
             overlayView = null
         }
         stopSelf()
@@ -409,10 +441,24 @@ class FloatingOverlayService : Service() {
             .setOngoing(true)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(1001, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
-        } else {
-            startForeground(1001, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val hasAudio = checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                if (hasAudio) {
+                    startForeground(1001, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+                } else {
+                    startForeground(1001, notification)
+                }
+            } else {
+                startForeground(1001, notification)
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "startForeground 启动安全捕获: ${e.message}")
+            try {
+                startForeground(1001, notification)
+            } catch (e2: Throwable) {
+                Log.e(TAG, "fallback startForeground 异常: ${e2.message}")
+            }
         }
     }
 

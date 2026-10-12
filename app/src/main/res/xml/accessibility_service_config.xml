@@ -5,5 +5,4 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="20"
     android:canRetrieveWindowContent="true"
-    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
-    android:packageNames="com.miui.voiceassist" />
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows" />

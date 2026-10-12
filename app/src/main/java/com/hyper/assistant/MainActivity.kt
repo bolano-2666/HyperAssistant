@@ -1,7 +1,9 @@
 package com.hyper.assistant
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.Uri
 import android.os.Build
@@ -12,6 +14,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.textfield.TextInputEditText
 import com.hyper.assistant.network.GephVpnController
@@ -46,6 +50,20 @@ class MainActivity : AppCompatActivity() {
         loadPreferences()
         setupListeners()
         updateVpnDisplay()
+        requestRuntimePermissions()
+    }
+
+    private fun requestRuntimePermissions() {
+        val permissions = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val needed = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (needed.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, needed.toTypedArray(), 1001)
+        }
     }
 
     private fun initViews() {
@@ -80,7 +98,7 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, "请在列表中找到「超灵助手」并开启", Toast.LENGTH_LONG).show()
         }
 
-        // 2. 悬浮窗权限跳转
+        // 2. 悬浮窗权限跳转 (兼容小米应用详情管理)
         btnOverlayPermission.setOnClickListener {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 if (!Settings.canDrawOverlays(this)) {
@@ -89,19 +107,17 @@ class MainActivity : AppCompatActivity() {
                         Uri.parse("package:$packageName")
                     )
                     startActivity(intent)
+                    Toast.makeText(this, "请开启「允许显示在其他应用上层」", Toast.LENGTH_LONG).show()
                 } else {
-                    Toast.makeText(this, "悬浮窗权限已就绪！", Toast.LENGTH_SHORT).show()
+                    // 如果已开启标准悬浮窗，引导检查小米专属的“后台弹出界面”
+                    openMiuiAppPermissions()
                 }
             }
         }
 
         // 3. 电池优化与后台锁定
         btnBatteryOptimization.setOnClickListener {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                startActivity(intent)
-                Toast.makeText(this, "建议将本应用设置为「无限制」以防 HyperOS 后台查杀", Toast.LENGTH_LONG).show()
-            }
+            openMiuiAppPermissions()
         }
 
         // 4. 迷雾通启动联动
@@ -128,9 +144,37 @@ class MainActivity : AppCompatActivity() {
 
         // 6. 保存配置并立即测试
         btnSaveConfig.setOnClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                Toast.makeText(this, "⚠️ 请先开启悬浮窗权限（第2个按钮），否则无法显示流光胶囊！", Toast.LENGTH_LONG).show()
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:$packageName")
+                )
+                startActivity(intent)
+                return@setOnClickListener
+            }
+
             savePreferences()
             Toast.makeText(this, "配置已保存，正在启动超灵助手胶囊浮层...", Toast.LENGTH_SHORT).show()
             startTestOverlay()
+        }
+    }
+
+    private fun openMiuiAppPermissions() {
+        try {
+            // 尝试直接进入小米系统权限详情页
+            val intent = Intent("miui.intent.action.APP_PERM_EDITOR").apply {
+                putExtra("extra_pkgname", packageName)
+            }
+            startActivity(intent)
+            Toast.makeText(this, "提示：请确保「显示悬浮窗」与「后台弹出界面」均已允许", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+            Toast.makeText(this, "请在权限管理中允许「悬浮窗」与「自启动」", Toast.LENGTH_LONG).show()
         }
     }
 
