@@ -185,11 +185,21 @@ class FloatingOverlayService : Service() {
 
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
         val isGemini = prefs.getBoolean("use_gemini", true)
-        val modelName = prefs.getString("model_name", if (isGemini) "gemini-3.8-flash" else "gpt-4o") ?: "gemini-3.8-flash"
-        val apiKey = prefs.getString("api_key", "")?.trim().orEmpty()
+        val modelName = if (isGemini) {
+            prefs.getString("gemini_model_name", "gemini-3.8-flash") ?: "gemini-3.8-flash"
+        } else {
+            prefs.getString("openai_model_name", "gpt-4o") ?: "gpt-4o"
+        }
+        val apiKey = if (isGemini) {
+            val key = prefs.getString("gemini_api_key", prefs.getString("api_key", ""))
+            key?.trim().orEmpty()
+        } else {
+            val key = prefs.getString("openai_api_key", "")
+            key?.trim().orEmpty()
+        }
 
         if (apiKey.isEmpty()) {
-            tvResponse.text = "请先在主应用中配置 API Key (Gemini 或 ChatGPT)"
+            tvResponse.text = "请先在主应用中配置 ${if (isGemini) "Gemini" else "OpenAI"} API Key"
             tvMicStatus.text = "未配置 API Key"
             return
         }

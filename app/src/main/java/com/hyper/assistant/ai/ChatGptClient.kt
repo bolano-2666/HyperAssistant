@@ -16,7 +16,7 @@ import java.io.InputStreamReader
 
 /**
  * OpenAI ChatGPT (GPT-4o / o3-mini) 流式通信客户端
- * 同样支持自动走迷雾通直连或 Cloudflare Worker 免翻墙反代
+ * 优化 endpoint 路径拼接，完美兼容官方与各类反代镜像站
  */
 object ChatGptClient {
 
@@ -33,8 +33,15 @@ object ChatGptClient {
     ) = withContext(Dispatchers.IO) {
         val baseUrl = SmartProxyManager.getOpenAiBaseUrl(context).trimEnd('/')
         val model = if (modelName.isNotBlank()) modelName else "gpt-4o"
-        val requestUrl = "$baseUrl/v1/chat/completions"
+        
+        // 智能兼容反代自带 /v1 后缀
+        val requestUrl = if (baseUrl.endsWith("/v1")) {
+            "$baseUrl/chat/completions"
+        } else {
+            "$baseUrl/v1/chat/completions"
+        }
 
+        val effectivePrompt = if (prompt.isNotBlank()) prompt else "你好"
         Log.d(TAG, "发起 ChatGPT 请求: $requestUrl, Model: $model")
 
         val requestJson = JsonObject().apply {
@@ -44,7 +51,7 @@ object ChatGptClient {
             val messages = JsonArray()
             val msg = JsonObject()
             msg.addProperty("role", "user")
-            msg.addProperty("content", prompt)
+            msg.addProperty("content", effectivePrompt)
             messages.add(msg)
 
             add("messages", messages)
