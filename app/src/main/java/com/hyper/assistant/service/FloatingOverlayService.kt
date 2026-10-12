@@ -402,8 +402,16 @@ class FloatingOverlayService : Service() {
                 },
                 onError = { err ->
                     val errorMsg = err.message ?: "未知网络错误"
-                    tvResponse.text = "请求异常: $errorMsg\n\n提示：若未开启迷雾通/VPN，请确保主界面的免翻墙反代设置有效。"
-                    tvHint.text = "请求异常，点击重试"
+                    if (errorMsg.contains("503") || errorMsg.contains("high demand") || errorMsg.contains("UNAVAILABLE")) {
+                        tvResponse.text = "Google Gemini 官方服务器瞬时排队高峰 (HTTP 503)\n\n这通常是短暂的，请轻点下方「点击重试」即可恢复正常！"
+                    } else if (errorMsg.contains("404")) {
+                        tvResponse.text = "模型代号不存在，请在主界面检查模型名称（推荐 gemini-3.8-flash）。"
+                    } else if (errorMsg.contains("Failed to connect") || errorMsg.contains("timeout") || errorMsg.contains("Unable to resolve")) {
+                        tvResponse.text = "网络连接超时: $errorMsg\n\n提示：请检查迷雾通是否连通，或配置反代地址。"
+                    } else {
+                        tvResponse.text = "请求异常: $errorMsg"
+                    }
+                    tvHint.text = "点击重试"
                 }
             )
         }

@@ -7,6 +7,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.hyper.assistant.network.SmartProxyManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -17,7 +18,7 @@ import java.io.InputStreamReader
 /**
  * Google Gemini 原生多模态（语音+视觉+文本）流式通信客户端
  * 原生支持音频输入 (audio/wav inline_data)，直接倾听人声，无需手机本地安装语音识别服务！
- * 默认搭载官方最新的 gemini-3.8-flash
+ * 默认搭载官方最新的 gemini-3.8-flash，支持 503/429 自动避峰重试
  */
 object GeminiClient {
 
@@ -100,58 +101,81 @@ object GeminiClient {
 
         val fullResponse = StringBuilder()
 
-        try {
-            val response = SmartProxyManager.okHttpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
-                val errBody = response.body?.string().orEmpty()
-                val errMsg = "Gemini 请求失败 HTTP ${response.code}: $errBody"
-                Log.e(TAG, errMsg)
-                withContext(Dispatchers.Main) {
-                    onError(RuntimeException(errMsg))
+        // 最多重试 2 次 (主要应对 Google 偶发的 503 High Demand 峰值排队)
+        var maxAttempts = 2
+        var attempt = 0
+
+        while (attempt < maxAttempts) {
+            attempt++
+            try {
+                val response = SmartProxyManager.okHttpClient.newCall(request).execute()
+                if (!response.isSuccessful) {
+                    val code = response.code
+                    val errBody = response.body?.string().orEmpty()
+
+                    // 如果是 Google 503/429 拥塞，且还有重试次数，等待 1.5 秒后自动重试
+                    if ((code == 503 || code == 429) && attempt < maxAttempts) {
+                        Log.w(TAG, "检测到 Google 503/429 繁忙，1.5 秒后自动发起第 $attempt 次重试...")
+                        delay(1500)
+                        continue
+                    }
+
+                    val errMsg = "Gemini 请求失败 HTTP $code: $errBody"
+                    Log.e(TAG, errMsg)
+                    withContext(Dispatchers.Main) {
+                        onError(RuntimeException(errMsg))
+                    }
+                    return@withContext
                 }
-                return@withContext
-            }
 
-            val inputStream = response.body?.byteStream() ?: throw IllegalStateException("空响应流")
-            val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
-            var line: String?
+                val inputStream = response.body?.byteStream() ?: throw IllegalStateException("空响应流")
+                val reader = BufferedReader(InputStreamReader(inputStream, Charsets.UTF_8))
+                var line: String?
 
-            while (reader.readLine().also { line = it } != null) {
-                val currentLine = line?.trim().orEmpty()
-                if (currentLine.startsWith("data:")) {
-                    val dataJson = currentLine.removePrefix("data:").trim()
-                    if (dataJson.isNotEmpty()) {
-                        try {
-                            val jsonObj = JsonParser.parseString(dataJson).asJsonObject
-                            val candidates = jsonObj.getAsJsonArray("candidates")
-                            if (candidates != null && candidates.size() > 0) {
-                                val content = candidates[0].asJsonObject.getAsJsonObject("content")
-                                val parts = content?.getAsJsonArray("parts")
-                                if (parts != null && parts.size() > 0) {
-                                    val text = parts[0].asJsonObject.get("text")?.asString.orEmpty()
-                                    if (text.isNotEmpty()) {
-                                        fullResponse.append(text)
-                                        withContext(Dispatchers.Main) {
-                                            onChunk(text)
+                while (reader.readLine().also { line = it } != null) {
+                    val currentLine = line?.trim().orEmpty()
+                    if (currentLine.startsWith("data:")) {
+                        val dataJson = currentLine.removePrefix("data:").trim()
+                        if (dataJson.isNotEmpty()) {
+                            try {
+                                val jsonObj = JsonParser.parseString(dataJson).asJsonObject
+                                val candidates = jsonObj.getAsJsonArray("candidates")
+                                if (candidates != null && candidates.size() > 0) {
+                                    val content = candidates[0].asJsonObject.getAsJsonObject("content")
+                                    val parts = content?.getAsJsonArray("parts")
+                                    if (parts != null && parts.size() > 0) {
+                                        val text = parts[0].asJsonObject.get("text")?.asString.orEmpty()
+                                        if (text.isNotEmpty()) {
+                                            fullResponse.append(text)
+                                            withContext(Dispatchers.Main) {
+                                                onChunk(text)
+                                            }
                                         }
                                     }
                                 }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "解析 SSE 分块失败: ${e.message}")
                             }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "解析 SSE 分块失败: ${e.message}")
                         }
                     }
                 }
-            }
 
-            withContext(Dispatchers.Main) {
-                onComplete(fullResponse.toString())
-            }
+                withContext(Dispatchers.Main) {
+                    onComplete(fullResponse.toString())
+                }
+                return@withContext
 
-        } catch (e: Throwable) {
-            Log.e(TAG, "Gemini 连接异常: ${e.message}", e)
-            withContext(Dispatchers.Main) {
-                onError(e)
+            } catch (e: Throwable) {
+                if (attempt < maxAttempts) {
+                    Log.w(TAG, "连接异常，正在进行自动重试: ${e.message}")
+                    delay(1200)
+                    continue
+                }
+                Log.e(TAG, "Gemini 连接异常: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    onError(e)
+                }
+                return@withContext
             }
         }
     }
