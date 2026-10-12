@@ -1,5 +1,6 @@
 package com.hyper.assistant.service
 
+import android.app.AlertDialog
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -31,18 +32,21 @@ import androidx.core.app.NotificationCompat
 import com.hyper.assistant.R
 import com.hyper.assistant.ai.AudioRecordManager
 import com.hyper.assistant.ai.GeminiClient
+import com.hyper.assistant.ai.ImageGenerator
 import com.hyper.assistant.ai.TtsPlaybackManager
 import com.hyper.assistant.network.GephVpnController
 import com.hyper.assistant.ui.EqualizerBarView
+import com.hyper.assistant.ui.FilePickerTrampolineActivity
 import com.hyper.assistant.ui.SiriGlowOverlayView
+import com.hyper.assistant.util.FileStorageHelper
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
- * 超级小爱 × Apple Intelligence 旗舰悬浮助手服务
- * 底部流光胶囊药丸 (Capsule Dock) + 实时四色音浪 + 折叠式深度思考面板
+ * 超级小爱 × Apple Intelligence 旗舰悬浮助手服务 (3.0 生产力全能版)
+ * 具备多模态文件/图片解析阅读、AI高清绘图与相册保存、文档生成与本地下载导出
  */
 class FloatingOverlayService : Service() {
 
@@ -58,11 +62,19 @@ class FloatingOverlayService : Service() {
     private var lastRecordedAudioBase64: String? = null
     private var lastAiResponseText: String = ""
 
+    // 当前用户挂载的本地附件（图片或 PDF/文档）
+    private var currentSelectedFile: FileStorageHelper.SelectedFileInfo? = null
+
     override fun onCreate() {
         super.onCreate()
         startForegroundNotification()
         audioRecordManager = AudioRecordManager(this)
         ttsPlaybackManager = TtsPlaybackManager(this)
+
+        // 注册文件选择完成回调
+        FilePickerTrampolineActivity.onFileSelectedListener = { fileInfo ->
+            onAttachmentReceived(fileInfo)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -81,7 +93,7 @@ class FloatingOverlayService : Service() {
 
         try {
             windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            
+
             // 如果已有浮层，先移除旧浮层
             if (overlayView != null) {
                 try {
@@ -141,16 +153,29 @@ class FloatingOverlayService : Service() {
         val btnClose = view.findViewById<ImageView>(R.id.btnCloseOverlay)
         val btnKeyboard = view.findViewById<ImageView>(R.id.btnSwitchKeyboard)
         val btnScreenCapture = view.findViewById<ImageView>(R.id.btnScreenCapture)
+        val btnAttachFile = view.findViewById<ImageView>(R.id.btnAttachFile)
         val equalizerBarView = view.findViewById<EqualizerBarView>(R.id.equalizerBarView)
 
+        // 附件挂载相关
+        val layoutSelectedAttachment = view.findViewById<LinearLayout>(R.id.layoutSelectedAttachment)
+        val tvAttachmentName = view.findViewById<TextView>(R.id.tvAttachmentName)
+        val btnRemoveAttachment = view.findViewById<ImageView>(R.id.btnRemoveAttachment)
+
+        // AI 图片生成相关
+        val imgAiGenerated = view.findViewById<ImageView>(R.id.imgAiGenerated)
+        val btnSaveImageToGallery = view.findViewById<Button>(R.id.btnSaveImageToGallery)
+
+        // 工具条按钮
         val btnCopyResponse = view.findViewById<TextView>(R.id.btnCopyResponse)
         val btnSpeakResponse = view.findViewById<TextView>(R.id.btnSpeakResponse)
+        val btnExportDocument = view.findViewById<TextView>(R.id.btnExportDocument)
 
         val layoutTextInput = view.findViewById<LinearLayout>(R.id.layoutTextInput)
         val etManualInput = view.findViewById<EditText>(R.id.etManualInput)
         val btnSendText = view.findViewById<Button>(R.id.btnSendText)
 
         val chipScreenSummary = view.findViewById<TextView>(R.id.chipScreenSummary)
+        val chipGenerateImage = view.findViewById<TextView>(R.id.chipGenerateImage)
         val chipPromptPoem = view.findViewById<TextView>(R.id.chipPromptPoem)
         val chipCreativeWriting = view.findViewById<TextView>(R.id.chipCreativeWriting)
 
@@ -181,7 +206,11 @@ class FloatingOverlayService : Service() {
             tvCapsuleHint.text = "正在思考中..."
             tvCapsuleSub.text = "Gemini 3.8 Flash 极速响应"
             expandChatView(layoutExpandedChat, scrollSuggestionChips)
-            tvUserQuery.text = "🎙️ [倾听你的声音并深度理解]"
+            tvUserQuery.text = if (currentSelectedFile != null) {
+                "🎙️ [结合「${currentSelectedFile?.fileName}」深度理解并回答]"
+            } else {
+                "🎙️ [倾听你的声音并深度理解]"
+            }
             queryAiModel(
                 prompt = "",
                 imageBase64 = null,
@@ -189,7 +218,9 @@ class FloatingOverlayService : Service() {
                 tvResponse = tvAiResponse,
                 tvHint = tvCapsuleHint,
                 layoutChat = layoutExpandedChat,
-                scrollChips = scrollSuggestionChips
+                scrollChips = scrollSuggestionChips,
+                imgAiGenerated = imgAiGenerated,
+                btnSaveImage = btnSaveImageToGallery
             )
         }
 
@@ -221,7 +252,19 @@ class FloatingOverlayService : Service() {
             }
         }
 
-        // 6. 切换键盘输入 [+]
+        // 6. [📎 附件] 按钮：弹窗选择上传图片或文档
+        btnAttachFile.setOnClickListener {
+            showAttachmentOptionsDialog()
+        }
+
+        // 7. 移除已选中的附件
+        btnRemoveAttachment.setOnClickListener {
+            currentSelectedFile = null
+            layoutSelectedAttachment.visibility = View.GONE
+            Toast.makeText(this, "已清除挂载附件", Toast.LENGTH_SHORT).show()
+        }
+
+        // 8. 切换键盘输入 [+]
         btnKeyboard.setOnClickListener {
             expandChatView(layoutExpandedChat, scrollSuggestionChips)
             layoutTextInput.visibility = if (layoutTextInput.visibility == View.VISIBLE) View.GONE else View.VISIBLE
@@ -230,7 +273,7 @@ class FloatingOverlayService : Service() {
             }
         }
 
-        // 7. 发送手动打字问题
+        // 9. 发送手动打字问题
         btnSendText.setOnClickListener {
             val text = etManualInput.text.toString().trim()
             if (text.isNotEmpty()) {
@@ -246,12 +289,14 @@ class FloatingOverlayService : Service() {
                     tvResponse = tvAiResponse,
                     tvHint = tvCapsuleHint,
                     layoutChat = layoutExpandedChat,
-                    scrollChips = scrollSuggestionChips
+                    scrollChips = scrollSuggestionChips,
+                    imgAiGenerated = imgAiGenerated,
+                    btnSaveImage = btnSaveImageToGallery
                 )
             }
         }
 
-        // 8. 推荐 Chips 快速提问
+        // 10. 推荐 Chips
         chipScreenSummary.setOnClickListener {
             handleQuickPrompt(
                 prompt = "请帮我全面总结分析当前手机屏幕的核心信息与关键数据",
@@ -259,7 +304,22 @@ class FloatingOverlayService : Service() {
                 tvAiResponse = tvAiResponse,
                 tvCapsuleHint = tvCapsuleHint,
                 layoutChat = layoutExpandedChat,
-                scrollChips = scrollSuggestionChips
+                scrollChips = scrollSuggestionChips,
+                imgAiGenerated = imgAiGenerated,
+                btnSaveImage = btnSaveImageToGallery
+            )
+        }
+
+        chipGenerateImage.setOnClickListener {
+            handleQuickPrompt(
+                prompt = "帮我生成一张未来赛博朋克霓虹雨夜的高清壁纸",
+                tvUserQuery = tvUserQuery,
+                tvAiResponse = tvAiResponse,
+                tvCapsuleHint = tvCapsuleHint,
+                layoutChat = layoutExpandedChat,
+                scrollChips = scrollSuggestionChips,
+                imgAiGenerated = imgAiGenerated,
+                btnSaveImage = btnSaveImageToGallery
             )
         }
 
@@ -270,7 +330,9 @@ class FloatingOverlayService : Service() {
                 tvAiResponse = tvAiResponse,
                 tvCapsuleHint = tvCapsuleHint,
                 layoutChat = layoutExpandedChat,
-                scrollChips = scrollSuggestionChips
+                scrollChips = scrollSuggestionChips,
+                imgAiGenerated = imgAiGenerated,
+                btnSaveImage = btnSaveImageToGallery
             )
         }
 
@@ -281,11 +343,13 @@ class FloatingOverlayService : Service() {
                 tvAiResponse = tvAiResponse,
                 tvCapsuleHint = tvCapsuleHint,
                 layoutChat = layoutExpandedChat,
-                scrollChips = scrollSuggestionChips
+                scrollChips = scrollSuggestionChips,
+                imgAiGenerated = imgAiGenerated,
+                btnSaveImage = btnSaveImageToGallery
             )
         }
 
-        // 9. 相机/屏幕感知
+        // 11. 屏幕感知 / 相机按钮
         btnScreenCapture.setOnClickListener {
             handleQuickPrompt(
                 prompt = "🔍 请智能感知当前画面，并给出最重要的操作建议与解答",
@@ -293,16 +357,18 @@ class FloatingOverlayService : Service() {
                 tvAiResponse = tvAiResponse,
                 tvCapsuleHint = tvCapsuleHint,
                 layoutChat = layoutExpandedChat,
-                scrollChips = scrollSuggestionChips
+                scrollChips = scrollSuggestionChips,
+                imgAiGenerated = imgAiGenerated,
+                btnSaveImage = btnSaveImageToGallery
             )
         }
 
-        // 10. 深度思考折叠条点击展开/收起
+        // 12. 深度思考折叠条
         tvThinkingBadge.setOnClickListener {
             Toast.makeText(this, "Gemini 3.8 Flash 已完成思维链深度推理", Toast.LENGTH_SHORT).show()
         }
 
-        // 11. 复制与朗读
+        // 13. 工具条：复制
         btnCopyResponse.setOnClickListener {
             if (lastAiResponseText.isNotEmpty()) {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -312,15 +378,87 @@ class FloatingOverlayService : Service() {
             }
         }
 
+        // 14. 工具条：朗读
         btnSpeakResponse.setOnClickListener {
             if (lastAiResponseText.isNotEmpty()) {
                 ttsPlaybackManager.speak(lastAiResponseText)
             }
         }
 
-        // 12. 关闭按钮
+        // 15. 工具条：导出文件至 Download 目录
+        btnExportDocument.setOnClickListener {
+            if (lastAiResponseText.isNotEmpty()) {
+                serviceScope.launch {
+                    val uri = FileStorageHelper.saveTextToDownloads(this@FloatingOverlayService, lastAiResponseText, "Hyper_AI_Report")
+                    if (uri != null) {
+                        Toast.makeText(this@FloatingOverlayService, "✅ 文件已成功导出保存至手机 Download/HyperAssistant 目录！", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(this@FloatingOverlayService, "导出保存失败，请检查存储权限", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } else {
+                Toast.makeText(this, "当前无回复内容可导出", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // 16. 关闭按钮
         btnClose.setOnClickListener {
             closeOverlay()
+        }
+    }
+
+    private fun showAttachmentOptionsDialog() {
+        val items = arrayOf("🖼️ 从相册选择图片", "📄 从手机选择文档 (PDF/TXT/代码/表格)", "🎨 快捷 AI 高清绘图")
+        val builder = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("上传附件与生产力工具")
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> openFilePicker(FilePickerTrampolineActivity.MODE_IMAGE)
+                    1 -> openFilePicker(FilePickerTrampolineActivity.MODE_DOCUMENT)
+                    2 -> {
+                        val layoutExpandedChat = overlayView?.findViewById<LinearLayout>(R.id.layoutExpandedChat)
+                        val scrollSuggestionChips = overlayView?.findViewById<HorizontalScrollView>(R.id.scrollSuggestionChips)
+                        val etManualInput = overlayView?.findViewById<EditText>(R.id.etManualInput)
+                        val layoutTextInput = overlayView?.findViewById<LinearLayout>(R.id.layoutTextInput)
+                        if (layoutExpandedChat != null && scrollSuggestionChips != null) {
+                            expandChatView(layoutExpandedChat, scrollSuggestionChips)
+                            layoutTextInput?.visibility = View.VISIBLE
+                            etManualInput?.setText("帮我画一张")
+                            etManualInput?.setSelection(etManualInput.text.length)
+                            etManualInput?.requestFocus()
+                        }
+                    }
+                }
+            }
+            .setNegativeButton("取消", null)
+
+        val dialog = builder.create()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
+        } else {
+            dialog.window?.setType(WindowManager.LayoutParams.TYPE_PHONE)
+        }
+        dialog.show()
+    }
+
+    private fun openFilePicker(mode: String) {
+        val intent = Intent(this, FilePickerTrampolineActivity::class.java).apply {
+            putExtra(FilePickerTrampolineActivity.EXTRA_PICK_MODE, mode)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        startActivity(intent)
+    }
+
+    private fun onAttachmentReceived(fileInfo: FileStorageHelper.SelectedFileInfo) {
+        currentSelectedFile = fileInfo
+        val layoutSelectedAttachment = overlayView?.findViewById<LinearLayout>(R.id.layoutSelectedAttachment)
+        val tvAttachmentName = overlayView?.findViewById<TextView>(R.id.tvAttachmentName)
+
+        if (layoutSelectedAttachment != null && tvAttachmentName != null) {
+            val typeDesc = if (fileInfo.isImage) "🖼️ 图片" else if (fileInfo.isPdf) "📄 PDF" else "📄 文档"
+            tvAttachmentName.text = "$typeDesc: ${fileInfo.fileName}"
+            layoutSelectedAttachment.visibility = View.VISIBLE
+            Toast.makeText(this, "已挂载「${fileInfo.fileName}」，请长按说话或打字提问！", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -335,13 +473,15 @@ class FloatingOverlayService : Service() {
         tvAiResponse: TextView,
         tvCapsuleHint: TextView,
         layoutChat: View,
-        scrollChips: View
+        scrollChips: View,
+        imgAiGenerated: ImageView,
+        btnSaveImage: Button
     ) {
         ttsPlaybackManager.stop()
         audioRecordManager.stopListening()
         expandChatView(layoutChat, scrollChips)
         tvUserQuery.text = prompt
-        queryAiModel(prompt, null, null, tvAiResponse, tvCapsuleHint, layoutChat, scrollChips)
+        queryAiModel(prompt, null, null, tvAiResponse, tvCapsuleHint, layoutChat, scrollChips, imgAiGenerated, btnSaveImage)
     }
 
     private fun queryAiModel(
@@ -351,11 +491,22 @@ class FloatingOverlayService : Service() {
         tvResponse: TextView,
         tvHint: TextView,
         layoutChat: View,
-        scrollChips: View
+        scrollChips: View,
+        imgAiGenerated: ImageView,
+        btnSaveImage: Button
     ) {
         currentAiJob?.cancel()
         tvResponse.text = "正在思考中..."
         lastAiResponseText = ""
+        imgAiGenerated.visibility = View.GONE
+        btnSaveImage.visibility = View.GONE
+
+        // 智能检测是否为 AI 绘图指令
+        val isDrawingRequest = prompt.contains("画") || prompt.contains("生成图片") || prompt.contains("AI绘图") || prompt.contains("壁纸")
+        if (isDrawingRequest && prompt.isNotBlank()) {
+            handleImageGeneration(prompt, tvResponse, tvHint, imgAiGenerated, btnSaveImage)
+            return
+        }
 
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
         val modelName = prefs.getString("gemini_model_name", "gemini-3.8-flash") ?: "gemini-3.8-flash"
@@ -370,6 +521,11 @@ class FloatingOverlayService : Service() {
         val speechBuffer = StringBuilder()
         var hasClearedPlaceholder = false
 
+        // 提取已选挂载文件的多模态数据
+        val fileBase64 = currentSelectedFile?.base64Data
+        val fileMimeType = currentSelectedFile?.mimeType
+        val documentText = currentSelectedFile?.textContent
+
         currentAiJob = serviceScope.launch {
             GeminiClient.streamChat(
                 context = this@FloatingOverlayService,
@@ -378,6 +534,9 @@ class FloatingOverlayService : Service() {
                 prompt = prompt,
                 imageBase64 = imageBase64,
                 audioBase64 = audioBase64,
+                fileBase64 = fileBase64,
+                fileMimeType = fileMimeType,
+                documentText = documentText,
                 onChunk = { chunk ->
                     if (!hasClearedPlaceholder) {
                         tvResponse.text = ""
@@ -414,6 +573,46 @@ class FloatingOverlayService : Service() {
                     tvHint.text = "点击重试"
                 }
             )
+        }
+    }
+
+    private fun handleImageGeneration(
+        prompt: String,
+        tvResponse: TextView,
+        tvHint: TextView,
+        imgAiGenerated: ImageView,
+        btnSaveImage: Button
+    ) {
+        tvResponse.text = "🎨 正在调动 FLUX 艺术神经网络，为您生成 1024×1024 高清大图，请稍候..."
+        tvHint.text = "正在绘图中..."
+
+        currentAiJob = serviceScope.launch {
+            val result = ImageGenerator.generateImage(prompt)
+            if (result != null) {
+                imgAiGenerated.setImageBitmap(result.bitmap)
+                imgAiGenerated.visibility = View.VISIBLE
+                btnSaveImage.visibility = View.VISIBLE
+
+                btnSaveImage.setOnClickListener {
+                    serviceScope.launch {
+                        val uri = FileStorageHelper.saveImageToGallery(this@FloatingOverlayService, result.imageBytes, "AI_Artwork")
+                        if (uri != null) {
+                            Toast.makeText(this@FloatingOverlayService, "✅ 高清图片已成功保存到手机系统相册！", Toast.LENGTH_LONG).show()
+                        } else {
+                            Toast.makeText(this@FloatingOverlayService, "保存相册失败，请检查权限", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                }
+
+                val replyText = "🎨 已为您成功绘制高清图像！点击下方绿色按钮即可一键保存至手机相册。"
+                tvResponse.text = replyText
+                lastAiResponseText = replyText
+                tvHint.text = "我在听..."
+                ttsPlaybackManager.speak("已为您成功生成高清图像！")
+            } else {
+                tvResponse.text = "生图网络异常，请检查网络连接后点击重试。"
+                tvHint.text = "生图失败，点击重试"
+            }
         }
     }
 
@@ -475,6 +674,7 @@ class FloatingOverlayService : Service() {
         closeOverlay()
         audioRecordManager.release()
         ttsPlaybackManager.shutdown()
+        FilePickerTrampolineActivity.onFileSelectedListener = null
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

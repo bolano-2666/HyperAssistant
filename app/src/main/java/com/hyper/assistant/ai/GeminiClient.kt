@@ -16,8 +16,8 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 
 /**
- * Google Gemini 原生多模态（语音+视觉+文本）流式通信客户端
- * 原生支持音频输入 (audio/wav inline_data)，直接倾听人声，无需手机本地安装语音识别服务！
+ * Google Gemini 原生多模态（语音+视觉+文档+文本）流式通信客户端
+ * 原生支持音频输入 (audio/wav)、文档 (application/pdf)、图像及文本文件解析
  * 默认搭载官方最新的 gemini-3.8-flash，支持 503/429 自动避峰重试
  */
 object GeminiClient {
@@ -31,6 +31,9 @@ object GeminiClient {
         prompt: String,
         imageBase64: String? = null,
         audioBase64: String? = null,
+        fileBase64: String? = null,
+        fileMimeType: String? = null,
+        documentText: String? = null,
         onChunk: (String) -> Unit,
         onComplete: (String) -> Unit,
         onError: (Throwable) -> Unit
@@ -39,7 +42,7 @@ object GeminiClient {
         val model = if (modelName.isNotBlank()) modelName else "gemini-3.8-flash"
         val requestUrl = "$baseUrl/v1beta/models/$model:streamGenerateContent?alt=sse&key=$apiKey"
 
-        Log.d(TAG, "发起 Gemini 请求: $requestUrl, Model: $model, 有无音频: ${!audioBase64.isNullOrEmpty()}")
+        Log.d(TAG, "发起 Gemini 请求: $requestUrl, Model: $model, 有无文件: ${!fileBase64.isNullOrEmpty() || !documentText.isNullOrEmpty()}")
 
         // 构建请求体
         val requestJson = JsonObject().apply {
@@ -59,19 +62,17 @@ object GeminiClient {
                 partsArray.add(audioPart)
             }
 
-            // 2. 文本提问或系统提示词
-            val effectivePrompt = if (prompt.isNotBlank()) {
-                prompt
-            } else if (!audioBase64.isNullOrEmpty()) {
-                "请直接听懂这段语音内容并回答我的问题，用口语化、亲切自然的短句直接回答，适合语音朗读。"
-            } else {
-                "你好"
+            // 2. 原生 PDF 或图像多模态文件输入
+            if (!fileBase64.isNullOrEmpty() && !fileMimeType.isNullOrEmpty()) {
+                val filePart = JsonObject()
+                val inlineData = JsonObject()
+                inlineData.addProperty("mime_type", fileMimeType)
+                inlineData.addProperty("data", fileBase64)
+                filePart.add("inline_data", inlineData)
+                partsArray.add(filePart)
             }
-            val textPart = JsonObject()
-            textPart.addProperty("text", effectivePrompt)
-            partsArray.add(textPart)
 
-            // 3. 屏幕截图等多模态视觉支持
+            // 3. 屏幕截图等图像支持
             if (!imageBase64.isNullOrEmpty()) {
                 val imagePart = JsonObject()
                 val inlineData = JsonObject()
@@ -81,6 +82,27 @@ object GeminiClient {
                 partsArray.add(imagePart)
             }
 
+            // 4. 文本文档、代码或表格内容嵌入
+            if (!documentText.isNullOrEmpty()) {
+                val docPart = JsonObject()
+                docPart.addProperty("text", "【用户上传的文件内容如下】:\n```\n$documentText\n```\n请结合上述文件内容为用户进行深度解析、总结或答疑。")
+                partsArray.add(docPart)
+            }
+
+            // 5. 文本提问或系统提示词
+            val effectivePrompt = if (prompt.isNotBlank()) {
+                prompt
+            } else if (!audioBase64.isNullOrEmpty()) {
+                "请直接听懂这段语音内容并回答我的问题，用口语化、亲切自然的短句直接回答，适合语音朗读。"
+            } else if (!fileBase64.isNullOrEmpty() || !documentText.isNullOrEmpty()) {
+                "请全面阅读并分析这份文件，总结其核心要点、关键数据与结论。"
+            } else {
+                "你好"
+            }
+            val textPart = JsonObject()
+            textPart.addProperty("text", effectivePrompt)
+            partsArray.add(textPart)
+
             contentObj.add("parts", partsArray)
             contentsArray.add(contentObj)
             add("contents", contentsArray)
@@ -88,7 +110,7 @@ object GeminiClient {
             // 生成参数
             val config = JsonObject()
             config.addProperty("temperature", 0.7)
-            config.addProperty("maxOutputTokens", 1024)
+            config.addProperty("maxOutputTokens", 2048)
             add("generationConfig", config)
         }
 
@@ -101,7 +123,7 @@ object GeminiClient {
 
         val fullResponse = StringBuilder()
 
-        // 最多重试 2 次 (主要应对 Google 偶发的 503 High Demand 峰值排队)
+        // 最多重试 2 次 (应对 503 High Demand 峰值排队)
         var maxAttempts = 2
         var attempt = 0
 
@@ -113,9 +135,8 @@ object GeminiClient {
                     val code = response.code
                     val errBody = response.body?.string().orEmpty()
 
-                    // 如果是 Google 503/429 拥塞，且还有重试次数，等待 1.5 秒后自动重试
                     if ((code == 503 || code == 429) && attempt < maxAttempts) {
-                        Log.w(TAG, "检测到 Google 503/429 繁忙，1.5 秒后自动发起第 $attempt 次重试...")
+                        Log.w(TAG, "检测到 Google 503/429 繁忙，1.5 秒后自动重试...")
                         delay(1500)
                         continue
                     }
@@ -167,7 +188,7 @@ object GeminiClient {
 
             } catch (e: Throwable) {
                 if (attempt < maxAttempts) {
-                    Log.w(TAG, "连接异常，正在进行自动重试: ${e.message}")
+                    Log.w(TAG, "连接异常，自动重试: ${e.message}")
                     delay(1200)
                     continue
                 }

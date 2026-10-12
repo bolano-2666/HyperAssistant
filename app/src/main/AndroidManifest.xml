@@ -58,6 +58,12 @@
             </intent-filter>
         </activity>
 
+        <!-- 文件与相册选择透明跳板 Activity -->
+        <activity
+            android:name=".ui.FilePickerTrampolineActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
         <!-- 核心：HyperOS 小爱同学毫秒级无障碍拦截与接管服务 -->
         <service
             android:name=".service.VoiceAssistInterceptorService"

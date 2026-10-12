@@ -106,6 +106,28 @@
                 android:textSize="12sp"
                 android:textStyle="bold" />
 
+            <!-- AI 生成的高清图片容器 -->
+            <ImageView
+                android:id="@+id/imgAiGenerated"
+                android:layout_width="match_parent"
+                android:layout_height="220dp"
+                android:layout_marginTop="10dp"
+                android:adjustViewBounds="true"
+                android:scaleType="centerCrop"
+                android:visibility="gone" />
+
+            <!-- 保存生成图片到系统相册按钮 -->
+            <Button
+                android:id="@+id/btnSaveImageToGallery"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="#34C759"
+                android:text="💾 保存高清图片到系统相册"
+                android:textColor="#FFFFFF"
+                android:textSize="13sp"
+                android:visibility="gone" />
+
             <!-- AI 回复正文滚动画布 -->
             <ScrollView
                 android:layout_width="match_parent"
@@ -123,7 +145,7 @@
                     android:textSize="15sp" />
             </ScrollView>
 
-            <!-- 底部工具芯片条 (复制、朗读、关闭) -->
+            <!-- 底部工具芯片条 (复制、朗读、导出文件) -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -132,9 +154,19 @@
                 android:orientation="horizontal">
 
                 <TextView
+                    android:id="@+id/btnExportDocument"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_suggestion_chip"
+                    android:text="⬇️ 导出保存文件"
+                    android:textColor="#E0E0E6"
+                    android:textSize="12sp" />
+
+                <TextView
                     android:id="@+id/btnCopyResponse"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
                     android:background="@drawable/bg_suggestion_chip"
                     android:text="📋 复制回答"
                     android:textColor="#E0E0E6"
@@ -184,7 +216,41 @@
 
         </LinearLayout>
 
-        <!-- 2.2 胶囊上方浮动推荐气泡 (Chips) (1:1 还原超级小爱推荐词) -->
+        <!-- 2.2 已选中的附件文件标签 (浮于胶囊上方，支持一键移除) -->
+        <LinearLayout
+            android:id="@+id/layoutSelectedAttachment"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:background="@drawable/bg_suggestion_chip"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="4dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvAttachmentName"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxWidth="240dp"
+                android:singleLine="true"
+                android:text="📎 论文报告.pdf"
+                android:textColor="#34C759"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+
+            <ImageView
+                android:id="@+id/btnRemoveAttachment"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_round_button"
+                android:padding="3dp"
+                android:src="@android:drawable/ic_menu_close_clear_cancel" />
+        </LinearLayout>
+
+        <!-- 2.3 胶囊上方浮动推荐气泡 (Chips) -->
         <HorizontalScrollView
             android:id="@+id/scrollSuggestionChips"
             android:layout_width="match_parent"
@@ -204,6 +270,16 @@
                     android:background="@drawable/bg_suggestion_chip"
                     android:text="✨ 深度总结当前屏幕"
                     android:textColor="#FFFFFF"
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/chipGenerateImage"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/bg_suggestion_chip"
+                    android:text="🎨 AI 高清画图"
+                    android:textColor="#FF9F0A"
                     android:textSize="13sp" />
 
                 <TextView
@@ -228,7 +304,7 @@
             </LinearLayout>
         </HorizontalScrollView>
 
-        <!-- 2.3 核心底部悬浮胶囊药丸 (Capsule Dock) -->
+        <!-- 2.4 核心底部悬浮胶囊药丸 (Capsule Dock) -->
         <LinearLayout
             android:id="@+id/cardCapsuleDock"
             android:layout_width="match_parent"
@@ -237,23 +313,33 @@
             android:elevation="12dp"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingHorizontal="14dp">
+            android:paddingHorizontal="12dp">
 
-            <!-- 左侧相机识图 / 屏幕感知 -->
+            <!-- 左侧 1：相机识图 / 屏幕感知 -->
             <ImageView
                 android:id="@+id/btnScreenCapture"
-                android:layout_width="38dp"
-                android:layout_height="38dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
                 android:background="@drawable/bg_round_button"
                 android:padding="8dp"
                 android:src="@android:drawable/ic_menu_camera" />
+
+            <!-- 左侧 2：新增 [📎 附件] 按钮 (支持图片与文档选择) -->
+            <ImageView
+                android:id="@+id/btnAttachFile"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/bg_round_button"
+                android:padding="8dp"
+                android:src="@android:drawable/ic_menu_add" />
 
             <!-- 中间提示语与录音交互区 (长按录音，松手发送) -->
             <LinearLayout
                 android:id="@+id/layoutDockCenter"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_marginHorizontal="10dp"
+                android:layout_marginHorizontal="8dp"
                 android:layout_weight="1"
                 android:gravity="center_vertical"
                 android:orientation="vertical">
@@ -279,15 +365,15 @@
             <!-- 右侧 4 色动态跳动波形条 (随麦克风振幅律动) -->
             <com.hyper.assistant.ui.EqualizerBarView
                 android:id="@+id/equalizerBarView"
-                android:layout_width="48dp"
+                android:layout_width="44dp"
                 android:layout_height="36dp"
                 android:layout_marginEnd="6dp" />
 
             <!-- 右侧展开键盘打字按钮 [+] -->
             <ImageView
                 android:id="@+id/btnSwitchKeyboard"
-                android:layout_width="38dp"
-                android:layout_height="38dp"
+                android:layout_width="36dp"
+                android:layout_height="36dp"
                 android:background="@drawable/bg_round_button"
                 android:padding="8dp"
                 android:src="@android:drawable/ic_input_get" />
