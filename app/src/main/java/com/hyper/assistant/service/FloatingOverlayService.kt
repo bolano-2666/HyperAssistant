@@ -110,9 +110,8 @@ class FloatingOverlayService : Service() {
         val btnScreenCapture = view.findViewById<ImageView>(R.id.btnScreenCapture)
 
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
-        val isGemini = prefs.getBoolean("use_gemini", true)
-        val modelName = prefs.getString("model_name", if (isGemini) "gemini-3.8-flash" else "gpt-4o") ?: "gemini-3.8-flash"
-        tvModelBadge.text = if (isGemini) "✨ $modelName" else "⚡ $modelName"
+        val modelName = prefs.getString("gemini_model_name", "gemini-3.8-flash") ?: "gemini-3.8-flash"
+        tvModelBadge.text = "✨ $modelName"
 
         val isVpnConnected = GephVpnController.isVpnConnected(this)
         tvVpnStatus.text = if (isVpnConnected) "🛡️ 迷雾通已联通" else "🌐 免翻墙反代直连中"
@@ -184,22 +183,11 @@ class FloatingOverlayService : Service() {
         tvResponse.text = ""
 
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
-        val isGemini = prefs.getBoolean("use_gemini", true)
-        val modelName = if (isGemini) {
-            prefs.getString("gemini_model_name", "gemini-3.8-flash") ?: "gemini-3.8-flash"
-        } else {
-            prefs.getString("openai_model_name", "gpt-4o") ?: "gpt-4o"
-        }
-        val apiKey = if (isGemini) {
-            val key = prefs.getString("gemini_api_key", prefs.getString("api_key", ""))
-            key?.trim().orEmpty()
-        } else {
-            val key = prefs.getString("openai_api_key", "")
-            key?.trim().orEmpty()
-        }
+        val modelName = prefs.getString("gemini_model_name", "gemini-3.8-flash") ?: "gemini-3.8-flash"
+        val apiKey = prefs.getString("gemini_api_key", prefs.getString("api_key", ""))?.trim().orEmpty()
 
         if (apiKey.isEmpty()) {
-            tvResponse.text = "请先在主应用中配置 ${if (isGemini) "Gemini" else "OpenAI"} API Key"
+            tvResponse.text = "请先在主应用中配置 Google Gemini API Key"
             tvMicStatus.text = "未配置 API Key"
             return
         }
@@ -207,61 +195,33 @@ class FloatingOverlayService : Service() {
         val speechBuffer = StringBuilder()
 
         currentAiJob = serviceScope.launch {
-            if (isGemini) {
-                GeminiClient.streamChat(
-                    context = this@FloatingOverlayService,
-                    apiKey = apiKey,
-                    modelName = modelName,
-                    prompt = prompt,
-                    imageBase64 = imageBase64,
-                    audioBase64 = audioBase64,
-                    onChunk = { chunk ->
-                        tvResponse.append(chunk)
-                        speechBuffer.append(chunk)
-                        if (speechBuffer.contains("。") || speechBuffer.contains("？") || speechBuffer.contains("！") || speechBuffer.contains("\n")) {
-                            ttsPlaybackManager.speak(speechBuffer.toString())
-                            speechBuffer.clear()
-                        }
-                    },
-                    onComplete = { fullText ->
-                        tvMicStatus.text = "轻点麦克风说话"
-                        if (speechBuffer.isNotEmpty()) {
-                            ttsPlaybackManager.speak(speechBuffer.toString())
-                            speechBuffer.clear()
-                        }
-                    },
-                    onError = { err ->
-                        tvResponse.text = "请求异常: ${err.message}"
-                        tvMicStatus.text = "轻点重试"
+            GeminiClient.streamChat(
+                context = this@FloatingOverlayService,
+                apiKey = apiKey,
+                modelName = modelName,
+                prompt = prompt,
+                imageBase64 = imageBase64,
+                audioBase64 = audioBase64,
+                onChunk = { chunk ->
+                    tvResponse.append(chunk)
+                    speechBuffer.append(chunk)
+                    if (speechBuffer.contains("。") || speechBuffer.contains("？") || speechBuffer.contains("！") || speechBuffer.contains("\n")) {
+                        ttsPlaybackManager.speak(speechBuffer.toString())
+                        speechBuffer.clear()
                     }
-                )
-            } else {
-                ChatGptClient.streamChat(
-                    context = this@FloatingOverlayService,
-                    apiKey = apiKey,
-                    modelName = modelName,
-                    prompt = prompt,
-                    onChunk = { chunk ->
-                        tvResponse.append(chunk)
-                        speechBuffer.append(chunk)
-                        if (speechBuffer.contains("。") || speechBuffer.contains("？") || speechBuffer.contains("！") || speechBuffer.contains("\n")) {
-                            ttsPlaybackManager.speak(speechBuffer.toString())
-                            speechBuffer.clear()
-                        }
-                    },
-                    onComplete = {
-                        tvMicStatus.text = "轻点麦克风说话"
-                        if (speechBuffer.isNotEmpty()) {
-                            ttsPlaybackManager.speak(speechBuffer.toString())
-                            speechBuffer.clear()
-                        }
-                    },
-                    onError = { err ->
-                        tvResponse.text = "请求异常: ${err.message}"
-                        tvMicStatus.text = "轻点重试"
+                },
+                onComplete = { fullText ->
+                    tvMicStatus.text = "轻点麦克风说话"
+                    if (speechBuffer.isNotEmpty()) {
+                        ttsPlaybackManager.speak(speechBuffer.toString())
+                        speechBuffer.clear()
                     }
-                )
-            }
+                },
+                onError = { err ->
+                    tvResponse.text = "请求异常: ${err.message}"
+                    tvMicStatus.text = "轻点重试"
+                }
+            )
         }
     }
 

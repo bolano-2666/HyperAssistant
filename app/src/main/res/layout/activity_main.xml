@@ -113,39 +113,23 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="2. AI 模型与 API Key 配置"
+                    android:text="2. Google Gemini 核心引擎配置"
                     android:textColor="#FFFFFF"
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
-                <RadioGroup
-                    android:id="@+id/radioGroupModel"
-                    android:layout_width="match_parent"
+                <TextView
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="10dp"
-                    android:orientation="horizontal">
-
-                    <RadioButton
-                        android:id="@+id/rbGemini"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:checked="true"
-                        android:text="Gemini 3 最新版"
-                        android:textColor="#FFFFFF" />
-
-                    <RadioButton
-                        android:id="@+id/rbOpenAi"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="16dp"
-                        android:text="ChatGPT (GPT-4o/o3)"
-                        android:textColor="#FFFFFF" />
-                </RadioGroup>
+                    android:layout_marginTop="4dp"
+                    android:text="搭载官方最新多模态 Gemini 3.8 Flash，免费额度极高且响应极速。"
+                    android:textColor="#8E8E93"
+                    android:textSize="12sp" />
 
                 <com.google.android.material.textfield.TextInputLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
+                    android:layout_marginTop="12dp"
                     android:textColorHint="#8E8E93"
                     app:boxBackgroundColor="#2C2C2E"
                     app:boxCornerRadiusBottomEnd="10dp"
@@ -180,7 +164,7 @@
                         android:id="@+id/etApiKey"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:hint="API Key (Gemini 或 OpenAI Key)"
+                        android:hint="Google Gemini API Key (AIzaSy...)"
                         android:inputType="textPassword"
                         android:textColor="#FFFFFF"
                         android:textSize="14sp" />

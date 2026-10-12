@@ -8,8 +8,6 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Button
-import android.widget.RadioButton
-import android.widget.RadioGroup
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
@@ -18,6 +16,9 @@ import com.hyper.assistant.network.GephVpnController
 import com.hyper.assistant.network.SmartProxyManager
 import com.hyper.assistant.service.FloatingOverlayService
 
+/**
+ * 超灵助手主配置页面 - 纯粹专精 Google Gemini 3.8 Flash 旗舰版
+ */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var tvVpnStatus: TextView
@@ -27,9 +28,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnLaunchGeph: Button
     private lateinit var btnSaveConfig: Button
 
-    private lateinit var radioGroupModel: RadioGroup
-    private lateinit var rbGemini: RadioButton
-    private lateinit var rbOpenAi: RadioButton
     private lateinit var etModelName: TextInputEditText
     private lateinit var etApiKey: TextInputEditText
     private lateinit var etCustomProxyBase: TextInputEditText
@@ -54,9 +52,6 @@ class MainActivity : AppCompatActivity() {
         btnLaunchGeph = findViewById(R.id.btnLaunchGeph)
         btnSaveConfig = findViewById(R.id.btnSaveConfig)
 
-        radioGroupModel = findViewById(R.id.radioGroupModel)
-        rbGemini = findViewById(R.id.rbGemini)
-        rbOpenAi = findViewById(R.id.rbOpenAi)
         etModelName = findViewById(R.id.etModelName)
         etApiKey = findViewById(R.id.etApiKey)
         etCustomProxyBase = findViewById(R.id.etCustomProxyBase)
@@ -64,60 +59,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadPreferences() {
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
-        val isGemini = prefs.getBoolean("use_gemini", true)
-        rbGemini.isChecked = isGemini
-        rbOpenAi.isChecked = !isGemini
-
-        if (isGemini) {
-            etModelName.setText(prefs.getString("gemini_model_name", "gemini-3.8-flash"))
-            val key = prefs.getString("gemini_api_key", prefs.getString("api_key", ""))
-            etApiKey.setText(key)
-            etApiKey.hint = "Google Gemini API Key (如 AIzaSy...)"
-        } else {
-            etModelName.setText(prefs.getString("openai_model_name", "gpt-4o"))
-            etApiKey.setText(prefs.getString("openai_api_key", ""))
-            etApiKey.hint = "OpenAI API Key (如 sk-...)"
-        }
-
+        val defaultModel = "gemini-3.8-flash"
+        etModelName.setText(prefs.getString("gemini_model_name", prefs.getString("model_name", defaultModel)))
+        
+        val key = prefs.getString("gemini_api_key", prefs.getString("api_key", ""))
+        etApiKey.setText(key)
         etCustomProxyBase.setText(SmartProxyManager.getSavedCustomProxyBase(this))
     }
 
     private fun setupListeners() {
-        radioGroupModel.setOnCheckedChangeListener { _, checkedId ->
-            val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
-            val editor = prefs.edit()
-
-            if (checkedId == R.id.rbGemini) {
-                // 保存当前 OpenAI 配置
-                editor.putString("openai_model_name", etModelName.text?.toString()?.trim().orEmpty())
-                editor.putString("openai_api_key", etApiKey.text?.toString()?.trim().orEmpty())
-                editor.putBoolean("use_gemini", true)
-                editor.apply()
-
-                // 还原 Gemini 配置
-                val gModel = prefs.getString("gemini_model_name", "gemini-3.8-flash") ?: "gemini-3.8-flash"
-                val gKey = prefs.getString("gemini_api_key", prefs.getString("api_key", "")) ?: ""
-                etModelName.setText(gModel)
-                etApiKey.setText(gKey)
-                etApiKey.hint = "Google Gemini API Key (如 AIzaSy...)"
-                Toast.makeText(this, "已切换为 Gemini，已恢复专属 Key", Toast.LENGTH_SHORT).show()
-            } else {
-                // 保存当前 Gemini 配置
-                editor.putString("gemini_model_name", etModelName.text?.toString()?.trim().orEmpty())
-                editor.putString("gemini_api_key", etApiKey.text?.toString()?.trim().orEmpty())
-                editor.putBoolean("use_gemini", false)
-                editor.apply()
-
-                // 还原 OpenAI 配置
-                val oModel = prefs.getString("openai_model_name", "gpt-4o") ?: "gpt-4o"
-                val oKey = prefs.getString("openai_api_key", "") ?: ""
-                etModelName.setText(oModel)
-                etApiKey.setText(oKey)
-                etApiKey.hint = "OpenAI API Key (如 sk-...)"
-                Toast.makeText(this, "已切换为 ChatGPT，已恢复专属 Key", Toast.LENGTH_SHORT).show()
-            }
-        }
-
         // 1. 无障碍权限跳转
         btnAccessibility.setOnClickListener {
             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
@@ -166,24 +116,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun savePreferences() {
-        val isGemini = rbGemini.isChecked
         val modelName = etModelName.text?.toString()?.trim().orEmpty()
         val apiKey = etApiKey.text?.toString()?.trim().orEmpty()
         val customProxy = etCustomProxyBase.text?.toString()?.trim().orEmpty()
 
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
-        val editor = prefs.edit()
-        editor.putBoolean("use_gemini", isGemini)
-
-        if (isGemini) {
-            editor.putString("gemini_model_name", modelName)
-            editor.putString("gemini_api_key", apiKey)
-            editor.putString("api_key", apiKey) // 兼容旧版
-        } else {
-            editor.putString("openai_model_name", modelName)
-            editor.putString("openai_api_key", apiKey)
-        }
-        editor.apply()
+        prefs.edit()
+            .putBoolean("use_gemini", true)
+            .putString("gemini_model_name", if (modelName.isNotEmpty()) modelName else "gemini-3.8-flash")
+            .putString("model_name", if (modelName.isNotEmpty()) modelName else "gemini-3.8-flash")
+            .putString("gemini_api_key", apiKey)
+            .putString("api_key", apiKey)
+            .apply()
 
         SmartProxyManager.saveCustomProxyBase(this, customProxy)
     }
