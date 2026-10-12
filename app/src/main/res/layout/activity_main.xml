@@ -24,7 +24,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
-            android:text="Redmi K90 至尊版 小爱同学长按电源键改造 Siri / Gemini 3"
+            android:text="超级小爱 × Apple Intelligence 旗舰版 (Gemini 3.8 Flash)"
             android:textColor="#8E8E93"
             android:textSize="13sp" />
 
@@ -57,7 +57,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="需要无障碍服务以拦截小爱唤醒，悬浮窗权限用于渲染Siri边缘流光。"
+                    android:text="需要无障碍服务以拦截小爱唤醒，悬浮窗权限用于渲染底部流光胶囊与Siri边缘。"
                     android:textColor="#8E8E93"
                     android:textSize="12sp" />
 
@@ -122,7 +122,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:text="搭载官方最新多模态 Gemini 3.8 Flash，免费额度极高且响应极速。"
+                    android:text="预设 Gemini 3.8 Flash 旗舰多模态，免手输语音转文字，自动永久记忆。"
                     android:textColor="#8E8E93"
                     android:textSize="12sp" />
 
@@ -193,7 +193,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="3. 迷雾通 (Geph) 联动与免翻墙反代"
+                    android:text="3. 网络通道与免翻墙反代配置"
                     android:textColor="#FFFFFF"
                     android:textSize="16sp"
                     android:textStyle="bold" />
@@ -221,7 +221,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:text="免科学上网反向代理 Base URL (未开VPN时自动使用)："
+                    android:text="免科学上网反向代理端点 (未开VPN时自动使用)："
                     android:textColor="#8E8E93"
                     android:textSize="12sp" />
 
@@ -241,10 +241,20 @@
                         android:id="@+id/etCustomProxyBase"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:hint="反代地址 (如 https://cf-gemini.yourdomain.workers.dev)"
+                        android:hint="反代地址 (如 https://gemini-proxy.example.com)"
                         android:textColor="#FFFFFF"
                         android:textSize="13sp" />
                 </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnTestConnectivity"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:backgroundTint="#0A84FF"
+                    android:text="⚡ 测试当前网络连通性 (Ping Gemini API)"
+                    android:textAllCaps="false"
+                    app:cornerRadius="10dp" />
 
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
@@ -256,7 +266,7 @@
             android:layout_height="54dp"
             android:layout_marginTop="24dp"
             android:backgroundTint="#34C759"
-            android:text="保存配置并测试唤起 Siri 助手"
+            android:text="保存配置并测试唤起超灵助手"
             android:textColor="#FFFFFF"
             android:textSize="16sp"
             android:textStyle="bold"

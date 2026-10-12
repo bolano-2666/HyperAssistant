@@ -10,11 +10,14 @@ import android.provider.Settings
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.textfield.TextInputEditText
 import com.hyper.assistant.network.GephVpnController
 import com.hyper.assistant.network.SmartProxyManager
 import com.hyper.assistant.service.FloatingOverlayService
+import kotlinx.coroutines.launch
 
 /**
  * 超灵助手主配置页面 - 纯粹专精 Google Gemini 3.8 Flash 旗舰版
@@ -26,6 +29,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnOverlayPermission: Button
     private lateinit var btnBatteryOptimization: Button
     private lateinit var btnLaunchGeph: Button
+    private lateinit var btnTestConnectivity: Button
     private lateinit var btnSaveConfig: Button
 
     private lateinit var etModelName: TextInputEditText
@@ -50,6 +54,7 @@ class MainActivity : AppCompatActivity() {
         btnOverlayPermission = findViewById(R.id.btnOverlayPermission)
         btnBatteryOptimization = findViewById(R.id.btnBatteryOptimization)
         btnLaunchGeph = findViewById(R.id.btnLaunchGeph)
+        btnTestConnectivity = findViewById(R.id.btnTestConnectivity)
         btnSaveConfig = findViewById(R.id.btnSaveConfig)
 
         etModelName = findViewById(R.id.etModelName)
@@ -107,10 +112,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 5. 保存配置并立即测试
+        // 5. 网络连通性测试 (Ping API)
+        btnTestConnectivity.setOnClickListener {
+            savePreferences()
+            Toast.makeText(this, "正在探测 Gemini 网络路由连通性...", Toast.LENGTH_SHORT).show()
+            lifecycleScope.launch {
+                val result = SmartProxyManager.testConnection(this@MainActivity)
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("网络路由诊断报告")
+                    .setMessage(result.second)
+                    .setPositiveButton("知道了", null)
+                    .show()
+            }
+        }
+
+        // 6. 保存配置并立即测试
         btnSaveConfig.setOnClickListener {
             savePreferences()
-            Toast.makeText(this, "配置已保存，正在启动 Siri 浮层测试...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "配置已保存，正在启动超灵助手胶囊浮层...", Toast.LENGTH_SHORT).show()
             startTestOverlay()
         }
     }
@@ -150,7 +169,7 @@ class MainActivity : AppCompatActivity() {
             if (isConnected) {
                 append("✅ 已连通外网通道")
             } else {
-                append("⚠️ 未开启 (将自动使用免翻墙反向代理)")
+                append("⚠️ 未开启 (将使用免翻墙反代通道)")
             }
             if (hasGeph) {
                 append(" (检测到迷雾通客户端)")

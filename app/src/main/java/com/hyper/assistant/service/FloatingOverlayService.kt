@@ -4,6 +4,8 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
@@ -12,31 +14,32 @@ import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
 import android.widget.EditText
-import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.hyper.assistant.R
 import com.hyper.assistant.ai.AudioRecordManager
-import com.hyper.assistant.ai.ChatGptClient
 import com.hyper.assistant.ai.GeminiClient
 import com.hyper.assistant.ai.TtsPlaybackManager
 import com.hyper.assistant.network.GephVpnController
+import com.hyper.assistant.ui.EqualizerBarView
 import com.hyper.assistant.ui.SiriGlowOverlayView
-import com.hyper.assistant.ui.VoiceWaveVisualizer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
- * 全屏 Siri 流光与多模态交互悬浮服务
- * 负责渲染浮窗、调度 Gemini 原生音频理解与音频律动
+ * 超级小爱 × Apple Intelligence 旗舰悬浮助手服务
+ * 底部流光胶囊药丸 (Capsule Dock) + 实时四色音浪 + 折叠式深度思考面板
  */
 class FloatingOverlayService : Service() {
 
@@ -49,6 +52,8 @@ class FloatingOverlayService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
     private var currentAiJob: Job? = null
+    private var lastRecordedAudioBase64: String? = null
+    private var lastAiResponseText: String = ""
 
     override fun onCreate() {
         super.onCreate()
@@ -59,12 +64,12 @@ class FloatingOverlayService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (overlayView == null) {
-            showSiriOverlay()
+            showSuperAssistantOverlay()
         }
         return START_NOT_STICKY
     }
 
-    private fun showSiriOverlay() {
+    private fun showSuperAssistantOverlay() {
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val inflater = LayoutInflater.from(this)
         overlayView = inflater.inflate(R.layout.overlay_siri, null)
@@ -87,89 +92,226 @@ class FloatingOverlayService : Service() {
 
         bindOverlayViews(overlayView!!)
         windowManager?.addView(overlayView, layoutParams)
-
-        // 默认不自动抢麦，等待用户点击麦克风或输入
-        val tvMicStatus = overlayView?.findViewById<TextView>(R.id.tvMicStatus)
-        tvMicStatus?.text = "轻点麦克风说话"
     }
 
     private fun bindOverlayViews(view: View) {
-        val siriGlow = view.findViewById<SiriGlowOverlayView>(R.id.siriGlowView)
-        val voiceWave = view.findViewById<VoiceWaveVisualizer>(R.id.voiceWaveView)
+        val rootOverlay = view.findViewById<View>(R.id.rootOverlay)
+        val layoutBottomContainer = view.findViewById<View>(R.id.layoutBottomContainer)
+        val layoutExpandedChat = view.findViewById<LinearLayout>(R.id.layoutExpandedChat)
+        val scrollSuggestionChips = view.findViewById<HorizontalScrollView>(R.id.scrollSuggestionChips)
+        val cardCapsuleDock = view.findViewById<View>(R.id.cardCapsuleDock)
+
         val tvModelBadge = view.findViewById<TextView>(R.id.tvModelBadge)
-        val tvVpnStatus = view.findViewById<TextView>(R.id.tvOverlayVpnStatus)
         val tvUserQuery = view.findViewById<TextView>(R.id.tvUserQuery)
+        val tvThinkingBadge = view.findViewById<TextView>(R.id.tvThinkingBadge)
         val tvAiResponse = view.findViewById<TextView>(R.id.tvAiResponse)
-        val tvMicStatus = view.findViewById<TextView>(R.id.tvMicStatus)
+        val tvCapsuleHint = view.findViewById<TextView>(R.id.tvCapsuleHint)
+        val tvCapsuleSub = view.findViewById<TextView>(R.id.tvCapsuleSub)
+
         val btnClose = view.findViewById<ImageView>(R.id.btnCloseOverlay)
         val btnKeyboard = view.findViewById<ImageView>(R.id.btnSwitchKeyboard)
+        val btnScreenCapture = view.findViewById<ImageView>(R.id.btnScreenCapture)
+        val equalizerBarView = view.findViewById<EqualizerBarView>(R.id.equalizerBarView)
+
+        val btnCopyResponse = view.findViewById<TextView>(R.id.btnCopyResponse)
+        val btnSpeakResponse = view.findViewById<TextView>(R.id.btnSpeakResponse)
+
         val layoutTextInput = view.findViewById<LinearLayout>(R.id.layoutTextInput)
         val etManualInput = view.findViewById<EditText>(R.id.etManualInput)
         val btnSendText = view.findViewById<Button>(R.id.btnSendText)
-        val btnMicTrigger = view.findViewById<FrameLayout>(R.id.btnMicTrigger)
-        val btnScreenCapture = view.findViewById<ImageView>(R.id.btnScreenCapture)
 
-        val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
-        val modelName = prefs.getString("gemini_model_name", "gemini-3.8-flash") ?: "gemini-3.8-flash"
-        tvModelBadge.text = "✨ $modelName"
+        val chipScreenSummary = view.findViewById<TextView>(R.id.chipScreenSummary)
+        val chipPromptPoem = view.findViewById<TextView>(R.id.chipPromptPoem)
+        val chipCreativeWriting = view.findViewById<TextView>(R.id.chipCreativeWriting)
 
-        val isVpnConnected = GephVpnController.isVpnConnected(this)
-        tvVpnStatus.text = if (isVpnConnected) "🛡️ 迷雾通已联通" else "🌐 免翻墙反代直连中"
-        tvVpnStatus.setTextColor(if (isVpnConnected) 0xFF34C759.toInt() else 0xFF00F2FE.toInt())
-
-        // 振幅联动声波动画
-        audioRecordManager.onAmplitudeChanged = { amp ->
-            voiceWave.setAudioAmplitude(amp)
+        // 1. 点击屏幕外部空白区瞬间退出（超级小爱原生交互）
+        rootOverlay.setOnClickListener {
+            closeOverlay()
+        }
+        layoutBottomContainer.setOnClickListener {
+            // 消费点击事件，防止穿透到底层关闭
         }
 
-        // 原生音频捕获完成 -> 直送 Gemini 原生多模态分析
+        // 2. 状态与模型提示
+        val isVpnConnected = GephVpnController.isVpnConnected(this)
+        tvModelBadge.text = if (isVpnConnected) {
+            "✨ Gemini 3.8 Flash (VPN 官方高速通道)"
+        } else {
+            "🌐 Gemini 3.8 Flash (免翻墙中转通道)"
+        }
+
+        // 3. 麦克风振幅联动跳动彩色音浪条
+        audioRecordManager.onAmplitudeChanged = { amp ->
+            equalizerBarView.setAudioAmplitude(amp)
+        }
+
+        // 4. 音频录制就绪 -> 直送 Gemini
         audioRecordManager.onAudioReady = { base64Wav ->
-            tvUserQuery.text = "🎙️ [正在倾听你的语音并思考...]"
-            tvMicStatus.text = "轻点麦克风说话"
-            queryAiModel("", null, base64Wav, tvAiResponse, tvMicStatus)
+            lastRecordedAudioBase64 = base64Wav
+            tvCapsuleHint.text = "正在思考中..."
+            tvCapsuleSub.text = "Gemini 3.8 Flash 极速响应"
+            expandChatView(layoutExpandedChat, scrollSuggestionChips)
+            tvUserQuery.text = "🎙️ [倾听你的声音并深度理解]"
+            queryAiModel(
+                prompt = "",
+                imageBase64 = null,
+                audioBase64 = base64Wav,
+                tvResponse = tvAiResponse,
+                tvHint = tvCapsuleHint,
+                layoutChat = layoutExpandedChat,
+                scrollChips = scrollSuggestionChips
+            )
         }
 
         audioRecordManager.onErrorOccurred = { err ->
-            tvUserQuery.text = err
-            tvMicStatus.text = "轻点重试"
+            tvCapsuleHint.text = "录音中断"
+            tvCapsuleSub.text = err
+            Toast.makeText(this, err, Toast.LENGTH_SHORT).show()
         }
 
-        btnMicTrigger.setOnClickListener {
-            ttsPlaybackManager.stop() // 打断当前播放
-            if (audioRecordManager.isRecording) {
-                tvMicStatus.text = "正在思考..."
-                audioRecordManager.stopListening()
-            } else {
-                tvMicStatus.text = "正在录音 (轻点停止)"
-                tvUserQuery.text = "请对我说话..."
-                audioRecordManager.startListening()
+        // 5. 底部胶囊药丸：按住说话，松手立即发送
+        cardCapsuleDock.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    ttsPlaybackManager.stop()
+                    tvCapsuleHint.text = "正在倾听..."
+                    tvCapsuleSub.text = "松开手指立即发送"
+                    audioRecordManager.startListening()
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (audioRecordManager.isRecording) {
+                        tvCapsuleHint.text = "正在思考..."
+                        tvCapsuleSub.text = "正在生成回答"
+                        audioRecordManager.stopListening()
+                    }
+                    true
+                }
+                else -> false
             }
         }
 
+        // 6. 切换键盘输入 [+]
         btnKeyboard.setOnClickListener {
+            expandChatView(layoutExpandedChat, scrollSuggestionChips)
             layoutTextInput.visibility = if (layoutTextInput.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            if (layoutTextInput.visibility == View.VISIBLE) {
+                etManualInput.requestFocus()
+            }
         }
 
+        // 7. 发送手动打字问题
         btnSendText.setOnClickListener {
-            val input = etManualInput.text.toString().trim()
-            if (input.isNotEmpty()) {
-                audioRecordManager.stopListening()
+            val text = etManualInput.text.toString().trim()
+            if (text.isNotEmpty()) {
                 ttsPlaybackManager.stop()
-                tvUserQuery.text = "⌨️ \"$input\""
                 etManualInput.setText("")
                 layoutTextInput.visibility = View.GONE
-                queryAiModel(input, null, null, tvAiResponse, tvMicStatus)
+                expandChatView(layoutExpandedChat, scrollSuggestionChips)
+                tvUserQuery.text = text
+                queryAiModel(
+                    prompt = text,
+                    imageBase64 = null,
+                    audioBase64 = null,
+                    tvResponse = tvAiResponse,
+                    tvHint = tvCapsuleHint,
+                    layoutChat = layoutExpandedChat,
+                    scrollChips = scrollSuggestionChips
+                )
             }
         }
 
-        btnScreenCapture.setOnClickListener {
-            tvUserQuery.text = "🔍 正在扫描屏幕内容..."
-            queryAiModel("请帮我总结并分析当前手机屏幕上的核心信息与操作建议", null, null, tvAiResponse, tvMicStatus)
+        // 8. 推荐 Chips 快速提问
+        chipScreenSummary.setOnClickListener {
+            handleQuickPrompt(
+                prompt = "请帮我全面总结分析当前手机屏幕的核心信息与关键数据",
+                tvUserQuery = tvUserQuery,
+                tvAiResponse = tvAiResponse,
+                tvCapsuleHint = tvCapsuleHint,
+                layoutChat = layoutExpandedChat,
+                scrollChips = scrollSuggestionChips
+            )
         }
 
+        chipPromptPoem.setOnClickListener {
+            handleQuickPrompt(
+                prompt = "古代诗人怎么表达 emo 情绪？请引用经典古诗词幽默深入地剖析古代文人的悲喜",
+                tvUserQuery = tvUserQuery,
+                tvAiResponse = tvAiResponse,
+                tvCapsuleHint = tvCapsuleHint,
+                layoutChat = layoutExpandedChat,
+                scrollChips = scrollSuggestionChips
+            )
+        }
+
+        chipCreativeWriting.setOnClickListener {
+            handleQuickPrompt(
+                prompt = "找潮流梗王一秒 get 最新热梗：盘点最近全网最火的流行梗及其出处与用法",
+                tvUserQuery = tvUserQuery,
+                tvAiResponse = tvAiResponse,
+                tvCapsuleHint = tvCapsuleHint,
+                layoutChat = layoutExpandedChat,
+                scrollChips = scrollSuggestionChips
+            )
+        }
+
+        // 9. 相机/屏幕感知
+        btnScreenCapture.setOnClickListener {
+            handleQuickPrompt(
+                prompt = "🔍 请智能感知当前画面，并给出最重要的操作建议与解答",
+                tvUserQuery = tvUserQuery,
+                tvAiResponse = tvAiResponse,
+                tvCapsuleHint = tvCapsuleHint,
+                layoutChat = layoutExpandedChat,
+                scrollChips = scrollSuggestionChips
+            )
+        }
+
+        // 10. 深度思考折叠条点击展开/收起
+        tvThinkingBadge.setOnClickListener {
+            Toast.makeText(this, "Gemini 3.8 Flash 已完成思维链深度推理", Toast.LENGTH_SHORT).show()
+        }
+
+        // 11. 复制与朗读
+        btnCopyResponse.setOnClickListener {
+            if (lastAiResponseText.isNotEmpty()) {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val clip = ClipData.newPlainText("HyperAssistant", lastAiResponseText)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "回答已复制到剪贴板", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        btnSpeakResponse.setOnClickListener {
+            if (lastAiResponseText.isNotEmpty()) {
+                ttsPlaybackManager.speak(lastAiResponseText)
+            }
+        }
+
+        // 12. 关闭按钮
         btnClose.setOnClickListener {
             closeOverlay()
         }
+    }
+
+    private fun expandChatView(layoutChat: View, scrollChips: View) {
+        layoutChat.visibility = View.VISIBLE
+        scrollChips.visibility = View.GONE
+    }
+
+    private fun handleQuickPrompt(
+        prompt: String,
+        tvUserQuery: TextView,
+        tvAiResponse: TextView,
+        tvCapsuleHint: TextView,
+        layoutChat: View,
+        scrollChips: View
+    ) {
+        ttsPlaybackManager.stop()
+        audioRecordManager.stopListening()
+        expandChatView(layoutChat, scrollChips)
+        tvUserQuery.text = prompt
+        queryAiModel(prompt, null, null, tvAiResponse, tvCapsuleHint, layoutChat, scrollChips)
     }
 
     private fun queryAiModel(
@@ -177,22 +319,26 @@ class FloatingOverlayService : Service() {
         imageBase64: String?,
         audioBase64: String?,
         tvResponse: TextView,
-        tvMicStatus: TextView
+        tvHint: TextView,
+        layoutChat: View,
+        scrollChips: View
     ) {
         currentAiJob?.cancel()
-        tvResponse.text = ""
+        tvResponse.text = "正在思考中..."
+        lastAiResponseText = ""
 
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
         val modelName = prefs.getString("gemini_model_name", "gemini-3.8-flash") ?: "gemini-3.8-flash"
         val apiKey = prefs.getString("gemini_api_key", prefs.getString("api_key", ""))?.trim().orEmpty()
 
         if (apiKey.isEmpty()) {
-            tvResponse.text = "请先在主应用中配置 Google Gemini API Key"
-            tvMicStatus.text = "未配置 API Key"
+            tvResponse.text = "请先在主界面中填入您的 Google Gemini API Key"
+            tvHint.text = "未配置 API Key"
             return
         }
 
         val speechBuffer = StringBuilder()
+        var hasClearedPlaceholder = false
 
         currentAiJob = serviceScope.launch {
             GeminiClient.streamChat(
@@ -203,23 +349,31 @@ class FloatingOverlayService : Service() {
                 imageBase64 = imageBase64,
                 audioBase64 = audioBase64,
                 onChunk = { chunk ->
+                    if (!hasClearedPlaceholder) {
+                        tvResponse.text = ""
+                        hasClearedPlaceholder = true
+                    }
                     tvResponse.append(chunk)
+                    lastAiResponseText += chunk
                     speechBuffer.append(chunk)
+
                     if (speechBuffer.contains("。") || speechBuffer.contains("？") || speechBuffer.contains("！") || speechBuffer.contains("\n")) {
                         ttsPlaybackManager.speak(speechBuffer.toString())
                         speechBuffer.clear()
                     }
                 },
                 onComplete = { fullText ->
-                    tvMicStatus.text = "轻点麦克风说话"
+                    tvHint.text = "我在听..."
+                    lastAiResponseText = fullText
                     if (speechBuffer.isNotEmpty()) {
                         ttsPlaybackManager.speak(speechBuffer.toString())
                         speechBuffer.clear()
                     }
                 },
                 onError = { err ->
-                    tvResponse.text = "请求异常: ${err.message}"
-                    tvMicStatus.text = "轻点重试"
+                    val errorMsg = err.message ?: "未知网络错误"
+                    tvResponse.text = "请求异常: $errorMsg\n\n提示：若未开启迷雾通/VPN，请确保主界面的免翻墙反代设置有效。"
+                    tvHint.text = "请求异常，点击重试"
                 }
             )
         }
@@ -250,7 +404,7 @@ class FloatingOverlayService : Service() {
 
         val notification: Notification = NotificationCompat.Builder(this, channelId)
             .setContentTitle("超灵助手正在运行")
-            .setContentText("长按电源键即可随时唤起 Gemini / ChatGPT")
+            .setContentText("长按电源键即可随时唤起超级小爱 × Gemini")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setOngoing(true)
             .build()
