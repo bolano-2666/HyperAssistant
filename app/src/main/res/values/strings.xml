@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">超灵助手 (HyperAssistant)</string>
+    <string name="accessibility_service_desc">用于在 Redmi / HyperOS 3.0 上长按电源键唤起小爱同学时，毫秒级接管并启动 Gemini 3 / ChatGPT 类似 Siri 交互面板。</string>
+    
+    <string name="title_model_settings">AI 核心大模型设置</string>
+    <string name="title_proxy_settings">免翻墙反代与迷雾通 (Geph) 联动</string>
+    <string name="title_permission_settings">HyperOS 3.0 系统权限配置</string>
+    
+    <string name="btn_enable_accessibility">开启无障碍拦截服务</string>
+    <string name="btn_enable_overlay">授予悬浮窗权限 (显示Siri光晕)</string>
+    <string name="btn_battery_optimization">设置后台无限制 (防止被杀)</string>
+    <string name="btn_launch_geph">打开迷雾通客户端</string>
+    <string name="btn_save_config">保存所有配置</string>
+    
+    <string name="status_vpn_connected">迷雾通 / VPN 状态：已连接</string>
+    <string name="status_vpn_disconnected">迷雾通 / VPN 状态：未连接 (将走内置反代线路)</string>
+    
+    <string name="hint_gemini_api_key">输入 Google Gemini API Key</string>
+    <string name="hint_openai_api_key">输入 OpenAI ChatGPT API Key</string>
+    <string name="hint_proxy_url">输入反代地址 (默认: https://api.openai.com 或自建 CF 反代)</string>
+</resources>
