@@ -21,6 +21,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.HorizontalScrollView
@@ -277,6 +278,9 @@ class FloatingOverlayService : Service() {
         btnSendText.setOnClickListener {
             val text = etManualInput.text.toString().trim()
             if (text.isNotEmpty()) {
+                val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+                imm?.hideSoftInputFromWindow(etManualInput.windowToken, 0)
+
                 ttsPlaybackManager.stop()
                 etManualInput.setText("")
                 layoutTextInput.visibility = View.GONE
@@ -496,7 +500,10 @@ class FloatingOverlayService : Service() {
         btnSaveImage: Button
     ) {
         currentAiJob?.cancel()
-        tvResponse.text = "正在思考中..."
+        ttsPlaybackManager.stop()
+
+        tvHint.text = "正在思考中..."
+        tvResponse.text = "正在连接 Google 节点并组织语言..."
         lastAiResponseText = ""
         imgAiGenerated.visibility = View.GONE
         btnSaveImage.visibility = View.GONE
@@ -515,6 +522,14 @@ class FloatingOverlayService : Service() {
         if (apiKey.isEmpty()) {
             tvResponse.text = "请先在主界面中填入您的 Google Gemini API Key"
             tvHint.text = "未配置 API Key"
+            return
+        }
+
+        val isVpnConnected = GephVpnController.isVpnConnected(this)
+        val customProxy = prefs.getString("custom_proxy_base", "")?.trim().orEmpty()
+        if (!isVpnConnected && customProxy.isEmpty()) {
+            tvResponse.text = "⚠️ 未检测到 VPN 连接\n\nGoogle Gemini 官方服务在大陆网络需要海外节点。\n请下拉手机控制中心开启「迷雾通」或系统 VPN，然后轻触下方「点击重试」即可畅享秒回！"
+            tvHint.text = "请开启 VPN"
             return
         }
 
@@ -537,6 +552,9 @@ class FloatingOverlayService : Service() {
                 fileBase64 = fileBase64,
                 fileMimeType = fileMimeType,
                 documentText = documentText,
+                onStatusUpdate = { status ->
+                    tvHint.text = status
+                },
                 onChunk = { chunk ->
                     if (!hasClearedPlaceholder) {
                         tvResponse.text = ""
