@@ -36,7 +36,7 @@ import kotlinx.coroutines.launch
 
 /**
  * 全屏 Siri 流光与多模态交互悬浮服务
- * 负责渲染浮窗、调度 Gemini 3 / ChatGPT 流式推理与音频律动
+ * 负责渲染浮窗、调度 Gemini 原生音频理解与音频律动
  */
 class FloatingOverlayService : Service() {
 
@@ -88,8 +88,9 @@ class FloatingOverlayService : Service() {
         bindOverlayViews(overlayView!!)
         windowManager?.addView(overlayView, layoutParams)
 
-        // 启动拾音
-        startListeningVoice()
+        // 默认不自动抢麦，等待用户点击麦克风或输入
+        val tvMicStatus = overlayView?.findViewById<TextView>(R.id.tvMicStatus)
+        tvMicStatus?.text = "轻点麦克风说话"
     }
 
     private fun bindOverlayViews(view: View) {
@@ -110,7 +111,7 @@ class FloatingOverlayService : Service() {
 
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
         val isGemini = prefs.getBoolean("use_gemini", true)
-        val modelName = prefs.getString("model_name", if (isGemini) "gemini-3.1-pro" else "gpt-4o") ?: "gemini-3.1-pro"
+        val modelName = prefs.getString("model_name", if (isGemini) "gemini-3.8-flash" else "gpt-4o") ?: "gemini-3.8-flash"
         tvModelBadge.text = if (isGemini) "✨ $modelName" else "⚡ $modelName"
 
         val isVpnConnected = GephVpnController.isVpnConnected(this)
@@ -122,20 +123,28 @@ class FloatingOverlayService : Service() {
             voiceWave.setAudioAmplitude(amp)
         }
 
-        audioRecordManager.onRecognizedResult = { queryText ->
-            tvUserQuery.text = "🗣️ \"$queryText\""
-            tvMicStatus.text = "思考中..."
-            queryAiModel(queryText, null, tvAiResponse, tvMicStatus)
+        // 原生音频捕获完成 -> 直送 Gemini 原生多模态分析
+        audioRecordManager.onAudioReady = { base64Wav ->
+            tvUserQuery.text = "🎙️ [正在倾听你的语音并思考...]"
+            tvMicStatus.text = "轻点麦克风说话"
+            queryAiModel("", null, base64Wav, tvAiResponse, tvMicStatus)
         }
 
         audioRecordManager.onErrorOccurred = { err ->
             tvUserQuery.text = err
-            tvMicStatus.text = "点击重新麦克风"
+            tvMicStatus.text = "轻点重试"
         }
 
         btnMicTrigger.setOnClickListener {
             ttsPlaybackManager.stop() // 打断当前播放
-            startListeningVoice()
+            if (audioRecordManager.isRecording) {
+                tvMicStatus.text = "正在思考..."
+                audioRecordManager.stopListening()
+            } else {
+                tvMicStatus.text = "正在录音 (轻点停止)"
+                tvUserQuery.text = "请对我说话..."
+                audioRecordManager.startListening()
+            }
         }
 
         btnKeyboard.setOnClickListener {
@@ -150,14 +159,13 @@ class FloatingOverlayService : Service() {
                 tvUserQuery.text = "⌨️ \"$input\""
                 etManualInput.setText("")
                 layoutTextInput.visibility = View.GONE
-                queryAiModel(input, null, tvAiResponse, tvMicStatus)
+                queryAiModel(input, null, null, tvAiResponse, tvMicStatus)
             }
         }
 
         btnScreenCapture.setOnClickListener {
-            // 触发屏幕理解 (可结合 MediaProjection 或 Accessibility 截图)
             tvUserQuery.text = "🔍 正在扫描屏幕内容..."
-            queryAiModel("请帮我总结并分析当前手机屏幕上的核心信息与操作建议", null, tvAiResponse, tvMicStatus)
+            queryAiModel("请帮我总结并分析当前手机屏幕上的核心信息与操作建议", null, null, tvAiResponse, tvMicStatus)
         }
 
         btnClose.setOnClickListener {
@@ -165,15 +173,10 @@ class FloatingOverlayService : Service() {
         }
     }
 
-    private fun startListeningVoice() {
-        val tvMicStatus = overlayView?.findViewById<TextView>(R.id.tvMicStatus)
-        tvMicStatus?.text = "正在聆听..."
-        audioRecordManager.startListening()
-    }
-
     private fun queryAiModel(
         prompt: String,
         imageBase64: String?,
+        audioBase64: String?,
         tvResponse: TextView,
         tvMicStatus: TextView
     ) {
@@ -182,7 +185,7 @@ class FloatingOverlayService : Service() {
 
         val prefs = getSharedPreferences("hyper_assistant_config", Context.MODE_PRIVATE)
         val isGemini = prefs.getBoolean("use_gemini", true)
-        val modelName = prefs.getString("model_name", if (isGemini) "gemini-3.1-pro" else "gpt-4o") ?: "gemini-3.1-pro"
+        val modelName = prefs.getString("model_name", if (isGemini) "gemini-3.8-flash" else "gpt-4o") ?: "gemini-3.8-flash"
         val apiKey = prefs.getString("api_key", "")?.trim().orEmpty()
 
         if (apiKey.isEmpty()) {
@@ -201,17 +204,17 @@ class FloatingOverlayService : Service() {
                     modelName = modelName,
                     prompt = prompt,
                     imageBase64 = imageBase64,
+                    audioBase64 = audioBase64,
                     onChunk = { chunk ->
                         tvResponse.append(chunk)
                         speechBuffer.append(chunk)
-                        // 遇到句号、问号、换行时流式断句朗读
                         if (speechBuffer.contains("。") || speechBuffer.contains("？") || speechBuffer.contains("！") || speechBuffer.contains("\n")) {
                             ttsPlaybackManager.speak(speechBuffer.toString())
                             speechBuffer.clear()
                         }
                     },
                     onComplete = { fullText ->
-                        tvMicStatus.text = "回答完毕"
+                        tvMicStatus.text = "轻点麦克风说话"
                         if (speechBuffer.isNotEmpty()) {
                             ttsPlaybackManager.speak(speechBuffer.toString())
                             speechBuffer.clear()
@@ -219,7 +222,7 @@ class FloatingOverlayService : Service() {
                     },
                     onError = { err ->
                         tvResponse.text = "请求异常: ${err.message}"
-                        tvMicStatus.text = "发生错误"
+                        tvMicStatus.text = "轻点重试"
                     }
                 )
             } else {
@@ -237,7 +240,7 @@ class FloatingOverlayService : Service() {
                         }
                     },
                     onComplete = {
-                        tvMicStatus.text = "回答完毕"
+                        tvMicStatus.text = "轻点麦克风说话"
                         if (speechBuffer.isNotEmpty()) {
                             ttsPlaybackManager.speak(speechBuffer.toString())
                             speechBuffer.clear()
@@ -245,7 +248,7 @@ class FloatingOverlayService : Service() {
                     },
                     onError = { err ->
                         tvResponse.text = "请求异常: ${err.message}"
-                        tvMicStatus.text = "发生错误"
+                        tvMicStatus.text = "轻点重试"
                     }
                 )
             }

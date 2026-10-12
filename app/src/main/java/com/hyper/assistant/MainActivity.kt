@@ -68,7 +68,7 @@ class MainActivity : AppCompatActivity() {
         rbGemini.isChecked = isGemini
         rbOpenAi.isChecked = !isGemini
 
-        val defaultModel = if (isGemini) "gemini-3.1-pro" else "gpt-4o"
+        val defaultModel = if (isGemini) "gemini-3.8-flash" else "gpt-4o"
         etModelName.setText(prefs.getString("model_name", defaultModel))
         etApiKey.setText(prefs.getString("api_key", ""))
         etCustomProxyBase.setText(SmartProxyManager.getSavedCustomProxyBase(this))
@@ -78,7 +78,7 @@ class MainActivity : AppCompatActivity() {
         radioGroupModel.setOnCheckedChangeListener { _, checkedId ->
             if (checkedId == R.id.rbGemini) {
                 if (etModelName.text.toString().contains("gpt", ignoreCase = true)) {
-                    etModelName.setText("gemini-3.1-pro")
+                    etModelName.setText("gemini-3.8-flash")
                 }
             } else {
                 if (etModelName.text.toString().contains("gemini", ignoreCase = true)) {

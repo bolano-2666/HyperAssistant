@@ -1,131 +1,184 @@
 package com.hyper.assistant.ai
 
+import android.annotation.SuppressLint
 import android.content.Context
-import android.content.Intent
-import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
+import android.util.Base64
 import android.util.Log
-import java.util.Locale
+import kotlinx.coroutines.*
+import java.io.ByteArrayOutputStream
+import kotlin.math.sqrt
 
 /**
- * 麦克风拾音、音量振幅计算与语音实时转写管理器
- * 将用户讲话的音量实时喂给 VoiceWaveVisualizer，同时转写文字触发 Gemini / ChatGPT
+ * 麦克风原生高保真录音管理器 (Gemini 原生听觉耳朵)
+ * 使用标准 AudioRecord 录制 16kHz 16-bit Mono 音频，无需系统安装任何第三方语音识别组件！
+ * 自动计算音浪振幅驱动 Siri 声波动画，并在录音结束时生成标准 WAV Base64 直送 Gemini 多模态模型。
  */
 class AudioRecordManager(private val context: Context) {
 
     private val TAG = "AudioRecordManager"
-    private var speechRecognizer: SpeechRecognizer? = null
-    private var isListening = false
+    private val SAMPLE_RATE = 16000
+    private val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
+    private val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
+
+    private var audioRecord: AudioRecord? = null
+    var isRecording = false
+        private set
+
+    private var recordJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     var onAmplitudeChanged: ((Float) -> Unit)? = null
-    var onRecognizedResult: ((String) -> Unit)? = null
+    var onAudioReady: ((base64Wav: String) -> Unit)? = null
     var onErrorOccurred: ((String) -> Unit)? = null
 
+    @SuppressLint("MissingPermission")
     fun startListening() {
-        if (isListening) return
+        if (isRecording) return
 
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            Log.w(TAG, "当前系统没有默认语音识别引擎")
-            onErrorOccurred?.invoke("系统未检测到语音识别组件，可双击切换手动打字")
+        val minBufferSize = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
+        if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
+            onErrorOccurred?.invoke("麦克风初始化错误: 缓冲区不可用")
             return
         }
 
-        speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-            setRecognitionListener(object : RecognitionListener {
-                override fun onReadyForSpeech(params: Bundle?) {
-                    Log.d(TAG, "已就绪，正在聆听用户说话...")
-                    isListening = true
-                }
-
-                override fun onBeginningOfSpeech() {
-                    Log.d(TAG, "检测到用户开始讲话")
-                }
-
-                override fun onRmsChanged(rmsdB: Float) {
-                    // rmsdB 范围通常在 -2 到 10 dB 之间，映射到 0 ~ 100 振幅
-                    val amplitude = ((rmsdB + 2f) / 12f * 100f).coerceIn(5f, 100f)
-                    onAmplitudeChanged?.invoke(amplitude)
-                }
-
-                override fun onBufferReceived(buffer: ByteArray?) {}
-
-                override fun onEndOfSpeech() {
-                    Log.d(TAG, "用户停止讲话")
-                    isListening = false
-                    onAmplitudeChanged?.invoke(10f)
-                }
-
-                override fun onError(error: Int) {
-                    val errMsg = when (error) {
-                        SpeechRecognizer.ERROR_NO_MATCH -> "未听清，请再说一次"
-                        SpeechRecognizer.ERROR_NETWORK -> "网络不可用"
-                        SpeechRecognizer.ERROR_AUDIO -> "麦克风录音异常"
-                        else -> "语音识别暂时中断 ($error)"
-                    }
-                    Log.w(TAG, "识别错误: $errMsg")
-                    isListening = false
-                    onErrorOccurred?.invoke(errMsg)
-                }
-
-                override fun onResults(results: Bundle?) {
-                    val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val text = matches?.firstOrNull()?.trim().orEmpty()
-                    isListening = false
-                    if (text.isNotEmpty()) {
-                        Log.d(TAG, "语音识别成功: $text")
-                        onRecognizedResult?.invoke(text)
-                    } else {
-                        onErrorOccurred?.invoke("未能识别到语音内容")
-                    }
-                }
-
-                override fun onPartialResults(partialResults: Bundle?) {
-                    val partialMatches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                    val partial = partialMatches?.firstOrNull()?.trim().orEmpty()
-                    if (partial.isNotEmpty()) {
-                        Log.v(TAG, "实时流式语音: $partial")
-                    }
-                }
-
-                override fun onEvent(eventType: Int, params: Bundle?) {}
-            })
-        }
-
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.CHINESE.toString())
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-        }
-
         try {
-            speechRecognizer?.startListening(intent)
+            audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                minBufferSize * 2
+            )
+
+            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                onErrorOccurred?.invoke("无法获取麦克风录音权限或被占用")
+                return
+            }
+
+            audioRecord?.startRecording()
+            isRecording = true
+            Log.d(TAG, "已启动原生 PCM 录音...")
+
+            recordJob = scope.launch {
+                val buffer = ByteArray(minBufferSize)
+                val outputStream = ByteArrayOutputStream()
+
+                while (isActive && isRecording) {
+                    val read = audioRecord?.read(buffer, 0, buffer.size) ?: 0
+                    if (read > 0) {
+                        outputStream.write(buffer, 0, read)
+
+                        // 计算 RMS 振幅 (0 ~ 100)
+                        var sum = 0.0
+                        for (i in 0 until read step 2) {
+                            val sample = (buffer[i].toInt() and 0xFF) or (buffer[i + 1].toInt() shl 8)
+                            sum += sample * sample
+                        }
+                        val rms = sqrt(sum / (read / 2))
+                        val amplitude = (rms / 32767.0 * 200.0).toFloat().coerceIn(10f, 100f)
+
+                        withContext(Dispatchers.Main) {
+                            onAmplitudeChanged?.invoke(amplitude)
+                        }
+                    }
+                }
+
+                // 录音结束，封装 WAV 格式并转 Base64
+                val pcmData = outputStream.toByteArray()
+                if (pcmData.isNotEmpty()) {
+                    val wavData = pcmToWav(pcmData, SAMPLE_RATE, 1)
+                    val base64Wav = Base64.encodeToString(wavData, Base64.NO_WRAP)
+                    Log.d(TAG, "音频捕获完成，大小: ${wavData.size} 字节")
+                    withContext(Dispatchers.Main) {
+                        onAudioReady?.invoke(base64Wav)
+                    }
+                }
+            }
+
         } catch (e: Exception) {
-            Log.e(TAG, "启动语音监听失败: ${e.message}")
-            onErrorOccurred?.invoke("启动录音失败: ${e.message}")
+            Log.e(TAG, "启动录音失败: ${e.message}", e)
+            isRecording = false
+            onErrorOccurred?.invoke("录音启动异常: ${e.message}")
         }
     }
 
     fun stopListening() {
-        if (!isListening) return
+        if (!isRecording) return
+        isRecording = false
         try {
-            speechRecognizer?.stopListening()
+            audioRecord?.stop()
+            audioRecord?.release()
         } catch (e: Exception) {
-            Log.e(TAG, "停止监听异常: ${e.message}")
+            Log.e(TAG, "停止录音异常: ${e.message}")
         } finally {
-            isListening = false
+            audioRecord = null
+            recordJob?.cancel()
+            onAmplitudeChanged?.invoke(10f)
         }
     }
 
     fun release() {
         stopListening()
-        try {
-            speechRecognizer?.destroy()
-        } catch (e: Exception) {
-            // ignore
-        }
-        speechRecognizer = null
+        scope.cancel()
+    }
+
+    /**
+     * 将原始 PCM 加上标准 44 字节 WAV 报头
+     */
+    private fun pcmToWav(pcmData: ByteArray, sampleRate: Int, channels: Int): ByteArray {
+        val totalAudioLen = pcmData.size.toLong()
+        val totalDataLen = totalAudioLen + 36
+        val byteRate = (sampleRate * channels * 16 / 8).toLong()
+        val header = ByteArray(44)
+
+        header[0] = 'R'.code.toByte()
+        header[1] = 'I'.code.toByte()
+        header[2] = 'F'.code.toByte()
+        header[3] = 'F'.code.toByte()
+        header[4] = (totalDataLen and 0xffL).toByte()
+        header[5] = ((totalDataLen shr 8) and 0xffL).toByte()
+        header[6] = ((totalDataLen shr 16) and 0xffL).toByte()
+        header[7] = ((totalDataLen shr 24) and 0xffL).toByte()
+        header[8] = 'W'.code.toByte()
+        header[9] = 'A'.code.toByte()
+        header[10] = 'V'.code.toByte()
+        header[11] = 'E'.code.toByte()
+        header[12] = 'f'.code.toByte()
+        header[13] = 'm'.code.toByte()
+        header[14] = 't'.code.toByte()
+        header[15] = ' '.code.toByte()
+        header[16] = 16
+        header[17] = 0
+        header[18] = 0
+        header[19] = 0
+        header[20] = 1 // PCM
+        header[21] = 0
+        header[22] = channels.toByte()
+        header[23] = 0
+        header[24] = (sampleRate and 0xff).toByte()
+        header[25] = ((sampleRate shr 8) and 0xff).toByte()
+        header[26] = ((sampleRate shr 16) and 0xff).toByte()
+        header[27] = ((sampleRate shr 24) and 0xff).toByte()
+        header[28] = (byteRate and 0xffL).toByte()
+        header[29] = ((byteRate shr 8) and 0xffL).toByte()
+        header[30] = ((byteRate shr 16) and 0xffL).toByte()
+        header[31] = ((byteRate shr 24) and 0xffL).toByte()
+        header[32] = (channels * 16 / 8).toByte()
+        header[33] = 0
+        header[34] = 16
+        header[35] = 0
+        header[36] = 'd'.code.toByte()
+        header[37] = 'a'.code.toByte()
+        header[38] = 't'.code.toByte()
+        header[39] = 'a'.code.toByte()
+        header[40] = (totalAudioLen and 0xffL).toByte()
+        header[41] = ((totalAudioLen shr 8) and 0xffL).toByte()
+        header[42] = ((totalAudioLen shr 16) and 0xffL).toByte()
+        header[43] = ((totalAudioLen shr 24) and 0xffL).toByte()
+
+        return header + pcmData
     }
 }

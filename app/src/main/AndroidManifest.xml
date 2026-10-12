@@ -45,6 +45,19 @@
             </intent-filter>
         </activity>
 
+        <!-- 小爱同学联动/捷径透明唤起跳板 -->
+        <activity
+            android:name=".TriggerActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="hyper" android:host="assistant" />
+            </intent-filter>
+        </activity>
+
         <!-- 核心：HyperOS 小爱同学毫秒级无障碍拦截与接管服务 -->
         <service
             android:name=".service.VoiceAssistInterceptorService"
@@ -61,7 +74,7 @@
         <!-- Siri风格全屏光晕与流式语音交互悬浮服务 -->
         <service
             android:name=".service.FloatingOverlayService"
-            android:exported="false"
+            android:exported="true"
             android:foregroundServiceType="microphone" />
 
         <!-- 系统原生标准数字助手 (VoiceInteractionService) -->
